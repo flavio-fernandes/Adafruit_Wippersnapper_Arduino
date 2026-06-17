@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  tools/magtag-flash-workbench --app-only [--yes]
+  tools/magtag-flash-workbench --full --yes
+
+Options:
+  --app-only   Flash only firmware.bin at 0x10000.
+  --full       Flash bootloader, partition table, boot_app0, and firmware.bin.
+  --yes        Confirm the selected flash operation.
+
+App-only flashing assumes the board already has a compatible bootloader and
+partition table for the MagTag PlatformIO environment.
+EOF
+}
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+# shellcheck source=tools/lib/workbench-env
+source "tools/lib/workbench-env"
+load_workbench_env PLATFORMIO_ENV ESPWB_SLOT
+
+env_name="${PLATFORMIO_ENV:-adafruit_magtag29_esp32s2}"
+slot="${ESPWB_SLOT:-SLOT1}"
+build_dir=".pio/build/$env_name"
+boot_app0=".pio/platformio-core/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
+mode=""
+yes=0
+
+while (($#)); do
+  case "$1" in
+    --app-only)
+      [[ -z "$mode" ]] || { echo "error: choose only one flash mode" >&2; exit 2; }
+      mode="app-only"
+      ;;
+    --full)
+      [[ -z "$mode" ]] || { echo "error: choose only one flash mode" >&2; exit 2; }
+      mode="full"
+      ;;
+    --yes|-y)
+      yes=1
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "error: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+if [[ -z "$mode" ]]; then
+  echo "error: choose --app-only or --full" >&2
+  usage >&2
+  exit 2
+fi
+
+if [[ ! -x "tools/espwb-esptool" ]]; then
+  echo "error: tools/espwb-esptool was not found or is not executable." >&2
+  echo "Copy/install it from https://github.com/flavio-fernandes/esp-codex-platform into tools/espwb-esptool." >&2
+  exit 1
+fi
+
+require_file() {
+  local path="$1"
+  if [[ ! -f "$path" ]]; then
+    echo "error: required file is missing: $path" >&2
+    echo "Run tools/magtag-build and tools/magtag-artifacts first." >&2
+    exit 1
+  fi
+}
+
+confirm() {
+  local prompt="$1"
+  if [[ "$yes" == "1" ]]; then
+    return 0
+  fi
+  read -r -p "$prompt Type 'yes' to continue: " answer
+  [[ "$answer" == "yes" ]] || { echo "aborted"; exit 1; }
+}
+
+export ESPWB_SLOT="$slot"
+
+if [[ "$mode" == "app-only" ]]; then
+  firmware="$build_dir/firmware.bin"
+  require_file "$firmware"
+  echo "Mode: app-only"
+  echo "Workbench slot: $ESPWB_SLOT"
+  echo "Warning: app-only flashing assumes the existing bootloader and partition table are compatible."
+  echo "Flash plan:"
+  echo "  0x10000  $firmware"
+  echo "+ tools/espwb-esptool write-flash 0x10000 $firmware"
+  exec tools/espwb-esptool write-flash 0x10000 "$firmware"
+fi
+
+require_file "$build_dir/bootloader.bin"
+require_file "$build_dir/partitions.bin"
+require_file "$boot_app0"
+require_file "$build_dir/firmware.bin"
+
+echo "Mode: full"
+echo "Workbench slot: $ESPWB_SLOT"
+echo "Flash plan:"
+echo "  0x1000   $build_dir/bootloader.bin"
+echo "  0x8000   $build_dir/partitions.bin"
+echo "  0xe000   $boot_app0"
+echo "  0x10000  $build_dir/firmware.bin"
+confirm "Full flash rewrites bootloader, partition table, boot_app0, and app firmware."
+echo "+ tools/espwb-esptool write-flash 0x1000 $build_dir/bootloader.bin 0x8000 $build_dir/partitions.bin 0xe000 $boot_app0 0x10000 $build_dir/firmware.bin"
+exec tools/espwb-esptool write-flash \
+  0x1000 "$build_dir/bootloader.bin" \
+  0x8000 "$build_dir/partitions.bin" \
+  0xe000 "$boot_app0" \
+  0x10000 "$build_dir/firmware.bin"

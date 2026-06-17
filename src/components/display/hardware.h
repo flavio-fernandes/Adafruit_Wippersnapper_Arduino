@@ -47,6 +47,7 @@ public:
                 wippersnapper_display_v1_TftSpiConfig *spi_config);
 
   void showSplash();
+  void setStatusBarEnabled(bool enabled);
   void drawStatusBar(const char *io_username);
   void updateStatusBar(int8_t rssi, uint8_t bat, bool mqtt_connected);
   //
@@ -55,6 +56,7 @@ public:
   // exposed within dispDrv driver instances
   //
   void writeMessage(const char *message);
+  void drawSleepMarker(const char *message);
 
 private:
   int16_t parsePin(const char *pinStr);

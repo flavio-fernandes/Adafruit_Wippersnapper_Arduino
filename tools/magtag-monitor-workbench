@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+# shellcheck source=tools/lib/workbench-env
+source "tools/lib/workbench-env"
+load_workbench_env ESPWB_SLOT ESPWB_MONITOR_HOST ESPWB_MONITOR_PORT
+
+slot="${ESPWB_SLOT:-SLOT1}"
+export ESPWB_SLOT="$slot"
+
+if [[ -x "tools/espwb-monitor" ]]; then
+  echo "Workbench slot: $ESPWB_SLOT"
+  echo "+ tools/espwb-monitor"
+  monitor_rc=0
+  tools/espwb-monitor || monitor_rc=$?
+  if [[ "$monitor_rc" -eq 0 ]]; then
+    exit 0
+  fi
+
+  if [[ -x "tools/magtag-recover-workbench" ]]; then
+    echo "== monitor failed; attempting workbench recovery before one retry =="
+    if tools/magtag-recover-workbench; then
+      echo "== retrying monitor after recovery =="
+      exec tools/espwb-monitor
+    fi
+  fi
+  exit "$monitor_rc"
+fi
+
+if [[ -n "${ESPWB_MONITOR_HOST:-}" ]]; then
+  port="${ESPWB_MONITOR_PORT:-4001}"
+  echo "Workbench slot: $ESPWB_SLOT"
+  echo "Connecting to monitor TCP endpoint: $ESPWB_MONITOR_HOST:$port"
+  echo "+ nc $ESPWB_MONITOR_HOST $port"
+  exec nc "$ESPWB_MONITOR_HOST" "$port"
+fi
+
+cat >&2 <<'EOF'
+error: no workbench monitor command is configured.
+
+Either install tools/espwb-monitor from esp-codex-platform, or set these in
+config/workbench.env:
+
+  ESPWB_MONITOR_HOST=your-workbench-host
+  ESPWB_MONITOR_PORT=4001
+
+Do not commit config/workbench.env.
+EOF
+exit 1

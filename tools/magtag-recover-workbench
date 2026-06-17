@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+# shellcheck source=tools/lib/workbench-env
+source "tools/lib/workbench-env"
+load_workbench_env \
+  ESPWB_SLOT WORKBENCH_IP WORKBENCH_URL ESPWB_MONITOR_PORT \
+  ESPWB_API_CONNECT_TIMEOUT ESPWB_API_MAX_TIME ESPWB_RECOVER_API_MAX_TIME
+
+slot="${ESPWB_SLOT:-SLOT1}"
+workbench_ip="${WORKBENCH_IP:-192.0.2.10}"
+workbench_url="${WORKBENCH_URL:-http://${workbench_ip}:8080}"
+monitor_port="${ESPWB_MONITOR_PORT:-4001}"
+api_connect_timeout="${ESPWB_API_CONNECT_TIMEOUT:-3}"
+api_max_time="${ESPWB_API_MAX_TIME:-8}"
+recover_api_max_time="${ESPWB_RECOVER_API_MAX_TIME:-20}"
+
+api_curl() {
+  curl --connect-timeout "$api_connect_timeout" --max-time "$api_max_time" "$@"
+}
+
+recover_curl() {
+  curl --connect-timeout "$api_connect_timeout" --max-time "$recover_api_max_time" "$@"
+}
+
+wait_for_port() {
+  local attempts="${1:-12}"
+  local i
+  for ((i = 1; i <= attempts; i++)); do
+    if nc -z -w 1 "$workbench_ip" "$monitor_port" >/dev/null 2>&1; then
+      echo "== ${slot} RFC2217 portal is reachable on ${workbench_ip}:${monitor_port} =="
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+echo "Workbench slot: $slot"
+
+if [[ -x "tools/espwb-esptool" ]]; then
+  echo "== trying reset-aware recovery through tools/espwb-esptool flash-id =="
+  if tools/espwb-esptool flash-id; then
+    wait_for_port 5 || true
+    exit 0
+  fi
+  echo "WARNING: tools/espwb-esptool flash-id failed; trying workbench API recovery directly" >&2
+fi
+
+echo "== asking workbench API to recover ${slot} =="
+if ! recover_curl -fsS \
+  -X POST "${workbench_url}/api/serial/recover" \
+  -H 'Content-Type: application/json' \
+  -d "{\"slot\":\"${slot}\"}" >/dev/null; then
+  echo "error: workbench recovery API did not respond in time" >&2
+  exit 1
+fi
+
+if wait_for_port 20; then
+  exit 0
+fi
+
+echo "WARNING: ${slot} RFC2217 portal did not become reachable after recovery" >&2
+status_file="$(mktemp)"
+cleanup() {
+  rm -f "$status_file"
+}
+trap cleanup EXIT
+
+if api_curl -fsS "${workbench_url}/api/devices" >"$status_file"; then
+  python3 - "$slot" "$status_file" <<'PY'
+import json
+import sys
+
+slot = sys.argv[1].upper()
+with open(sys.argv[2], "r", encoding="utf-8") as f:
+    data = json.load(f)
+for item in data.get("slots", []):
+    if str(item.get("label", "")).upper() == slot:
+        print(
+            "last status: present={} running={} recovering={} state={} tcp_port={} last_error={}".format(
+                item.get("present"),
+                item.get("running"),
+                item.get("recovering"),
+                item.get("state"),
+                item.get("tcp_port"),
+                item.get("last_error"),
+            ),
+            file=sys.stderr,
+        )
+        break
+PY
+fi
+
+exit 1

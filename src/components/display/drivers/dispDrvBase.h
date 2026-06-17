@@ -97,6 +97,25 @@ public:
   virtual void writeMessage(const char *message) = 0;
 
   /*!
+      @brief  Draws a small sleep marker without clearing existing content.
+      @param  message
+              The marker text to draw.
+  */
+  virtual void drawSleepMarker(const char *message) {
+    // No-op for base class
+  }
+
+  /*!
+      @brief  Enables or disables the display driver's status bar.
+      @param  enabled
+              True to show and reserve the status bar area, false to let
+              messages use the full display.
+  */
+  virtual void setStatusBarEnabled(bool enabled) {
+    _status_bar_enabled = enabled;
+  }
+
+  /*!
       @brief  Sets the width of the display.
       @param  w
               The width of the display in pixels.
@@ -183,6 +202,7 @@ protected:
   uint8_t
       _statusbar_bat; ///< Battery level, as a percentage, for the status bar
   bool _statusbar_mqtt_connected; ///< MQTT connection status for the status bar
+  bool _status_bar_enabled = true; ///< True when status bar layout is enabled
 };
 
 #endif // WS_DISP_DRV_BASE_H

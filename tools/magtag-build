@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+# shellcheck source=tools/lib/workbench-env
+source "tools/lib/workbench-env"
+load_workbench_env PLATFORMIO_ENV PIO PLATFORMIO_CORE_DIR PLATFORMIO_SETTING_ENABLE_TELEMETRY
+
+env_name="${PLATFORMIO_ENV:-adafruit_magtag29_esp32s2}"
+
+if [[ -n "${PIO:-}" ]]; then
+  pio_cmd=("$PIO")
+elif command -v pio >/dev/null 2>&1; then
+  pio_cmd=(pio)
+elif [[ -x ".venv/bin/pio" ]]; then
+  pio_cmd=(".venv/bin/pio")
+else
+  echo "error: PlatformIO CLI not found." >&2
+  echo "Install PlatformIO, activate the VS Code PlatformIO environment, or create .venv/bin/pio." >&2
+  exit 1
+fi
+
+export PLATFORMIO_CORE_DIR="${PLATFORMIO_CORE_DIR:-$repo_root/.pio/platformio-core}"
+export PLATFORMIO_SETTING_ENABLE_TELEMETRY="${PLATFORMIO_SETTING_ENABLE_TELEMETRY:-no}"
+
+echo "PlatformIO env: $env_name"
+echo "PlatformIO core: $PLATFORMIO_CORE_DIR"
+echo "+ ${pio_cmd[*]} run -e $env_name"
+exec "${pio_cmd[@]}" run -e "$env_name"

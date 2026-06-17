@@ -83,7 +83,10 @@ public:
     _display->setTextWrap(false);
     _height = _display->height();
     _width = _display->width();
-    _display->clearBuffer();
+    if (reset) {
+      _display->clearBuffer();
+      _display->display();
+    }
     return true;
   }
 
@@ -103,7 +106,7 @@ public:
                 The Adafruit IO username to display on the status bar.
   */
   virtual void drawStatusBar(const char *io_username) override {
-    if (!_display)
+    if (!_display || !_status_bar_enabled)
       return;
 
     // Clear the entire display buffer to remove splash screen
@@ -155,7 +158,7 @@ public:
           The current MQTT connection status.
 */
   void updateStatusBar(int8_t rssi, uint8_t bat, bool mqtt_status) override {
-    if (!_display)
+    if (!_display || !_status_bar_enabled)
       return;
 
     // Only update wifi icon if the RSSI has changed significantly (+/- 5dB)
@@ -220,11 +223,10 @@ public:
     if (_display == nullptr)
       return;
 
-    // Clear only the area below the status bar
-    _display->fillRect(0, STATUS_BAR_HEIGHT, _display->width(),
-                       _display->height() - STATUS_BAR_HEIGHT, EPD_WHITE);
-    // Add padding between status bar and text content
-    int16_t y_idx = STATUS_BAR_HEIGHT + 4;
+    int16_t top = _status_bar_enabled ? STATUS_BAR_HEIGHT : 0;
+    _display->fillRect(0, top, _display->width(), _display->height() - top,
+                       EPD_WHITE);
+    int16_t y_idx = top + 4;
     _display->setCursor(0, y_idx);
 
     // Calculate the line height based on the text size (NOTE: base height is
@@ -266,6 +268,35 @@ public:
         _display->print(message[i]);
       }
     }
+    _display->display();
+  }
+
+  virtual void drawSleepMarker(const char *message) override {
+    if (_display == nullptr)
+      return;
+
+    if (message == nullptr || message[0] == '\0') {
+      message = "zzz";
+    }
+
+    uint16_t markerTextLen = strlen(message);
+    if (markerTextLen > 8) {
+      markerTextLen = 8;
+    }
+    uint16_t markerWidth = markerTextLen * 6 + 8;
+    uint16_t markerHeight = 13;
+    int16_t x = (_display->width() - markerWidth) / 2;
+    int16_t y = _display->height() - markerHeight - 2;
+
+    _display->fillRect(x, y, markerWidth, markerHeight, EPD_WHITE);
+    _display->drawRect(x, y, markerWidth, markerHeight, EPD_BLACK);
+    _display->setTextSize(1);
+    _display->setTextColor(EPD_BLACK);
+    _display->setCursor(x + 4, y + 3);
+    for (uint16_t i = 0; i < markerTextLen; i++) {
+      _display->print(message[i]);
+    }
+    _display->setTextSize(_text_sz);
     _display->display();
   }
 

@@ -83,10 +83,15 @@ bool DisplayController::Handle_Display_AddOrReplace(
     return false;
   }
 
-  WS.runNetFSM();
-  display->showSplash();
-  WS.runNetFSM();
-  display->drawStatusBar(WS._config.aio_user);
+  bool showStatusBar = !WS._config.magtag_low_power.enabled ||
+                       WS._config.magtag_low_power.display_status_bar;
+  display->setStatusBarEnabled(showStatusBar);
+  if (showStatusBar) {
+    WS.runNetFSM();
+    display->showSplash();
+    WS.runNetFSM();
+    display->drawStatusBar(WS._config.aio_user);
+  }
   WS.runNetFSM();
 
   _hw_instances.push_back(display); // Store the display instance
@@ -152,6 +157,34 @@ bool DisplayController::Handle_Display_Write(
 }
 
 /*!
+    @brief  Writes a message to every managed display.
+    @param  message
+            Pointer to the message to write.
+*/
+void DisplayController::writeAllDisplays(const char *message) {
+  for (DisplayHardware *hw_instance : _hw_instances) {
+    if (hw_instance != nullptr) {
+      hw_instance->writeMessage(message);
+      WS.runNetFSM();
+    }
+  }
+}
+
+/*!
+    @brief  Draws a small sleep marker on every managed display.
+    @param  message
+            Pointer to the marker text to draw.
+*/
+void DisplayController::drawSleepMarkers(const char *message) {
+  for (DisplayHardware *hw_instance : _hw_instances) {
+    if (hw_instance != nullptr) {
+      hw_instance->drawSleepMarker(message);
+      WS.runNetFSM();
+    }
+  }
+}
+
+/*!
     @brief  Updates the status bar on all managed displays.
     @param  rssi
             The current WiFi RSSI value.
@@ -162,6 +195,11 @@ void DisplayController::update(int32_t rssi, bool is_connected) {
   // if _hw_instances is empty, early out
   if (_hw_instances.size() == 0)
     return;
+
+  if (WS._config.magtag_low_power.enabled &&
+      !WS._config.magtag_low_power.display_status_bar) {
+    return;
+  }
 
   // Only update the status bar every 60 seconds
   unsigned long now = millis();

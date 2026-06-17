@@ -3,3 +3,8 @@
 This folder contains templates for the `secrets.json` configuration file used by WipperSnapper's filesystem-backed-provisioning. This provisioning is only available to hardware compatible with TinyUSB.
 
 Each `.json` file contains Adafruit IO credentials and a single `network_type` object used to define a network interface's type and specific properties.
+
+MagTag builds can also opt into local low-power behavior with the optional
+`magtag_low_power` object. Leave `enabled` as `false` for the normal
+WipperSnapper display behavior, or set it to `true` to hide the eInk status bar
+and let the MagTag enter long deep-sleep intervals.

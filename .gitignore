@@ -38,7 +38,10 @@ html/*
 
 # VSCode artifacts
 .vscode/*
+!.vscode/tasks.json
 src/.vscode/settings.json
+.vscode/.browse.c_cpp.db*
+.vscode/ipch/
 
 # Visual Studio artifacts
 .vs/
@@ -55,10 +58,18 @@ examples/Wippersnapper_demo/build/
 
 # Secrets
 data/
+config/workbench.env
+/secrets.json
+/examples/secrets-examples/secrets.json
 
 # Misc. Data
 tests/
 venv/
+artifacts/
+*.bin
+*.elf
+*.map
+*.uf2
 
 Doxyfile
 

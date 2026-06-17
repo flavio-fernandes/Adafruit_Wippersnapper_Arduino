@@ -19,8 +19,17 @@ struct networkConfig {
   char pass[64];
 };
 
+struct magtagLowPowerConfig {
+  bool enabled;
+  bool display_status_bar;
+  int sleep_interval_minutes;
+  int awake_window_minutes;
+  char sleep_message[32];
+};
+
 struct secretsConfig {
   networkConfig network;
+  magtagLowPowerConfig magtag_low_power;
   char aio_url[64];
   char aio_user[31];
   char aio_key[41];

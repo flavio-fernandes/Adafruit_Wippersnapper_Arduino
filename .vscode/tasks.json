@@ -1,0 +1,30 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "MagTag: Build",
+      "type": "shell",
+      "command": "tools/magtag-build",
+      "problemMatcher": []
+    },
+    {
+      "label": "MagTag: List artifacts",
+      "type": "shell",
+      "command": "tools/magtag-artifacts",
+      "problemMatcher": []
+    },
+    {
+      "label": "MagTag: Flash app-only via workbench",
+      "type": "shell",
+      "command": "tools/magtag-flash-workbench",
+      "args": ["--app-only"],
+      "problemMatcher": []
+    },
+    {
+      "label": "MagTag: Monitor via workbench",
+      "type": "shell",
+      "command": "tools/magtag-monitor-workbench",
+      "problemMatcher": []
+    }
+  ]
+}

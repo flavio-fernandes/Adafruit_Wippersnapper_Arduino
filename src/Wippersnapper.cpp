@@ -35,6 +35,8 @@
 
 Wippersnapper WS;
 
+void __attribute__((weak)) wsAppBackground() {}
+
 Wippersnapper::Wippersnapper() {
   _mqtt = 0; // MQTT Client object
 
@@ -1760,11 +1762,13 @@ void cbThrottleTopic(char *throttleData, uint16_t len) {
   WS_DEBUG_PRINT("Device is throttled for ");
   WS_DEBUG_PRINTVAR(throttleDuration);
   WS_DEBUG_PRINTLN("ms and blocking command execution.");
+  WS.setThrottleDuration(throttleDuration);
 
   // If throttle duration is less than the keepalive interval, delay for the
   // full keepalive interval
   if (throttleDuration < WS_DEVICE_PING_MS) {
     delay(WS_DEVICE_PING_MS);
+    wsAppBackground();
   } else {
     // Round up so throttling never ends earlier than requested.
     uint32_t throttleLoops =
@@ -1774,9 +1778,11 @@ void cbThrottleTopic(char *throttleData, uint16_t len) {
       delay(WS_DEVICE_PING_MS);
       WS.feedWDT();
       WS._mqtt->ping();
+      wsAppBackground();
       throttleLoops--;
     }
   }
+  WS.clearThrottle();
   WS_DEBUG_PRINTLN("Device is un-throttled, resumed command execution");
 }
 
@@ -2429,6 +2435,7 @@ void Wippersnapper::errorWriteHang(String error) {
 /**************************************************************************/
 void Wippersnapper::runNetFSM() {
   WS.feedWDT();
+  wsAppBackground();
   // Initial state
   fsm_net_t fsmNetwork;
   fsmNetwork = FSM_NET_CHECK_MQTT;
@@ -2475,6 +2482,7 @@ void Wippersnapper::runNetFSM() {
         feedWDT();
         _connect();
         feedWDT();
+        wsAppBackground();
         // did we connect?
         if (networkStatus() == WS_NET_CONNECTED)
           break;
@@ -2516,6 +2524,7 @@ void Wippersnapper::runNetFSM() {
         WS_DEBUG_PRINTLN(
             "Unable to connect to Adafruit IO MQTT, retrying in 3 seconds...");
         delay(3000);
+        wsAppBackground();
         maxAttempts--;
       }
       if (fsmNetwork != FSM_NET_CHECK_MQTT) {
@@ -2643,6 +2652,35 @@ void Wippersnapper::pingBroker() {
 */
 /*******************************************************/
 void Wippersnapper::feedWDT() { Watchdog.reset(); }
+
+/**************************************************************************/
+/*!
+    @brief  Checks whether the device is currently waiting out an MQTT
+            throttle window.
+    @return True when throttled, false otherwise.
+*/
+/**************************************************************************/
+bool Wippersnapper::isThrottleActive() {
+  return _throttle_until != 0 && (int32_t)(millis() - _throttle_until) < 0;
+}
+
+/**************************************************************************/
+/*!
+    @brief  Records an MQTT throttle duration.
+    @param  throttleDuration
+            Throttle duration in milliseconds.
+*/
+/**************************************************************************/
+void Wippersnapper::setThrottleDuration(uint32_t throttleDuration) {
+  _throttle_until = millis() + throttleDuration;
+}
+
+/**************************************************************************/
+/*!
+    @brief  Clears the current MQTT throttle window.
+*/
+/**************************************************************************/
+void Wippersnapper::clearThrottle() { _throttle_until = 0; }
 
 /********************************************************/
 /*!
@@ -2850,6 +2888,7 @@ void Wippersnapper::connect() {
     WS_DEBUG_PRINTLN(
         "Polling for message containing hardware configuration...");
     WS._mqtt->processPackets(10); // poll
+    wsAppBackground();
   }
   // Publish that we have completed the configuration workflow
   WS.feedWDT();
@@ -2907,6 +2946,7 @@ void Wippersnapper::publishPinConfigComplete() {
 */
 /**************************************************************************/
 ws_status_t Wippersnapper::run() {
+  wsAppBackground();
   // Check networking
   runNetFSM();
   WS.feedWDT();

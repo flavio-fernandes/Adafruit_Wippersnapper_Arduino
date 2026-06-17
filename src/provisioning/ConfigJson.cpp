@@ -32,6 +32,14 @@ void convertToJson(const secretsConfig &src, JsonVariant dst) {
   dst["io_key"] = src.aio_key;
   dst["network_type_wifi"] = src.network;
   dst["status_pixel_brightness"] = src.status_pixel_brightness;
+  JsonObject lowPower = dst["magtag_low_power"].to<JsonObject>();
+  lowPower["enabled"] = src.magtag_low_power.enabled;
+  lowPower["display_status_bar"] = src.magtag_low_power.display_status_bar;
+  lowPower["sleep_interval_minutes"] =
+      src.magtag_low_power.sleep_interval_minutes;
+  lowPower["awake_window_minutes"] =
+      src.magtag_low_power.awake_window_minutes;
+  lowPower["sleep_message"] = src.magtag_low_power.sleep_message;
 }
 
 // Extracts a JSON file to a secretsConfig structure
@@ -47,4 +55,16 @@ void convertFromJson(JsonVariantConst src, secretsConfig &dst) {
   dst.status_pixel_brightness = src["status_pixel_brightness"] | 0.2;
   // Parse MQTT port from secrets, if exists
   dst.io_port = src["io_port"] | 8883;
+  JsonVariantConst lowPower = src["magtag_low_power"];
+  dst.magtag_low_power.enabled = lowPower["enabled"] | false;
+  dst.magtag_low_power.display_status_bar =
+      lowPower["display_status_bar"] |
+      (dst.magtag_low_power.enabled ? false : true);
+  dst.magtag_low_power.sleep_interval_minutes =
+      lowPower["sleep_interval_minutes"] | 180;
+  dst.magtag_low_power.awake_window_minutes =
+      lowPower["awake_window_minutes"] | 10;
+  strlcpy(dst.magtag_low_power.sleep_message,
+          lowPower["sleep_message"] | "zzz",
+          sizeof(dst.magtag_low_power.sleep_message));
 }

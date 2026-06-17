@@ -35,6 +35,8 @@ public:
       wippersnapper_display_v1_DisplayAddOrReplace *msgAdd);
   bool Handle_Display_Remove(wippersnapper_display_v1_DisplayRemove *msgRemove);
   bool Handle_Display_Write(wippersnapper_display_v1_DisplayWrite *msgWrite);
+  void writeAllDisplays(const char *message);
+  void drawSleepMarkers(const char *message);
   void update(int32_t rssi, bool is_connected);
 
 private:

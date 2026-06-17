@@ -167,7 +167,7 @@
 #endif
 
 #define WS_VERSION                                                             \
-  "1.0.0-beta.130" ///< WipperSnapper app. version (semver-formatted)
+  "1.0.0-flaviof.130" ///< WipperSnapper app. version (semver-formatted)
 
 // Reserved Adafruit IO MQTT topics
 #define TOPIC_IO_THROTTLE "/throttle" ///< Adafruit IO Throttle MQTT Topic
@@ -329,6 +329,9 @@ public:
   // Networking helpers
   void pingBroker();
   void runNetFSM();
+  bool isThrottleActive();
+  void setThrottleDuration(uint32_t throttleDuration);
+  void clearThrottle();
 
   // WDT helpers
   void enableWDT(int timeoutMS = 0);
@@ -484,6 +487,7 @@ protected:
                                 MQTT broker, in milliseconds. */
   uint32_t _prvKATBlink = 0; /*!< Previous time when client pinged Adafruit IO's
                              MQTT broker, in milliseconds. */
+  uint32_t _throttle_until = 0; /*!< Time when MQTT throttling may resume. */
 
   // Device information
   const char *_deviceId; /*!< Adafruit IO+ device identifier string */

@@ -33,6 +33,20 @@
 
 #include "Wippersnapper_FS.h"
 #include "print_dependencies.h"
+
+#if __has_include(<ws_default_secrets.h>)
+#include <ws_default_secrets.h>
+#else
+static const char WS_DEFAULT_SECRETS_JSON[] =
+    "{\n"
+    "  \"io_username\": \"YOUR_IO_USERNAME_HERE\",\n"
+    "  \"io_key\": \"YOUR_IO_KEY_HERE\",\n"
+    "  \"network_type_wifi\": {\n"
+    "    \"network_ssid\": \"YOUR_WIFI_SSID_HERE\",\n"
+    "    \"network_password\": \"YOUR_WIFI_PASS_HERE\"\n"
+    "  }\n"
+    "}\n";
+#endif
 // On-board external flash (QSPI or SPI) macros should already
 // defined in your board variant if supported
 // - EXTERNAL_FLASH_USE_QSPI
@@ -63,6 +77,26 @@ Adafruit_USBD_MSC usb_msc; /*!< USB mass storage object */
 
 FATFS elmchamFatfs;    ///< Elm Cham's fatfs object
 uint8_t workbuf[4096]; ///< Working buffer for f_fdisk function.
+
+static bool defaultSecretsNeedUserEdit() {
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, WS_DEFAULT_SECRETS_JSON);
+  if (error) {
+    return true;
+  }
+
+  const char *aioUser = doc["io_username"] | "";
+  const char *aioKey = doc["io_key"] | "";
+  const char *networkSsid =
+      doc["network_type_wifi"]["network_ssid"] | "";
+  const char *networkPass =
+      doc["network_type_wifi"]["network_password"] | "";
+
+  return strcmp(aioUser, "YOUR_IO_USERNAME_HERE") == 0 ||
+         strcmp(aioKey, "YOUR_IO_KEY_HERE") == 0 ||
+         strcmp(networkSsid, "YOUR_WIFI_SSID_HERE") == 0 ||
+         strcmp(networkPass, "YOUR_WIFI_PASS_HERE") == 0;
+}
 
 bool makeFilesystem() {
   FRESULT r = f_mkfs("", FM_FAT | FM_SFD, 0, workbuf, sizeof(workbuf));
@@ -342,20 +376,14 @@ void Wippersnapper_FS::createSecretsFile() {
   // Open file for writing
   File32 secretsFile = wipperFatFs.open("/secrets.json", FILE_WRITE);
   secretsFile.truncate(0);
-  // Create a default secretsConfig structure
-  secretsConfig secretsConfig;
-  strcpy(secretsConfig.aio_user, "YOUR_IO_USERNAME_HERE");
-  strcpy(secretsConfig.aio_key, "YOUR_IO_KEY_HERE");
-  strcpy(secretsConfig.network.ssid, "YOUR_WIFI_SSID_HERE");
-  strcpy(secretsConfig.network.pass, "YOUR_WIFI_PASS_HERE");
-  secretsConfig.status_pixel_brightness = STATUS_PIXEL_BRIGHTNESS_DEFAULT;
-
-  // Serialize the struct to a JSON document
-  JsonDocument doc;
-  doc.set(secretsConfig);
-  serializeJsonPretty(doc, secretsFile);
+  secretsFile.print(WS_DEFAULT_SECRETS_JSON);
   secretsFile.flush();
   secretsFile.close();
+
+  if (!defaultSecretsNeedUserEdit()) {
+    writeToBootOut("Generated secrets.json from built-in custom defaults.\n");
+    return;
+  }
 
   writeToBootOut("ERROR: Please edit the secrets.json file. Then, reset your board.\n");
   // Re-attach the USB device for file access
@@ -370,6 +398,15 @@ void Wippersnapper_FS::createSecretsFile() {
 */
 /**************************************************************************/
 void Wippersnapper_FS::parseSecrets() {
+  JsonDocument defaultDoc;
+  secretsConfig defaultConfig = WS._config;
+  DeserializationError defaultError =
+      deserializeJson(defaultDoc, WS_DEFAULT_SECRETS_JSON);
+  if (!defaultError) {
+    defaultConfig = defaultDoc.as<secretsConfig>();
+    WS._config = defaultConfig;
+  }
+
   // Attempt to open the secrets.json file for reading
   File32 secretsFile = wipperFatFs.open("/secrets.json");
   if (!secretsFile) {
@@ -431,6 +468,9 @@ void Wippersnapper_FS::parseSecrets() {
 
   // Extract a config struct from the JSON document
   WS._config = doc.as<secretsConfig>();
+  if (!doc["magtag_low_power"].is<JsonObject>()) {
+    WS._config.magtag_low_power = defaultConfig.magtag_low_power;
+  }
 
   // Validate the config struct is not filled with default values
   if (strcmp(WS._config.aio_user, "YOUR_IO_USERNAME_HERE") == 0 ||

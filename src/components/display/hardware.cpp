@@ -254,7 +254,9 @@ bool DisplayHardware::beginEPD(
 
   _drvDisp->setTextSize(config->text_size);
 
-  if (!_drvDisp->begin(epd_mode)) {
+  bool refresh_on_begin = !WS._config.magtag_low_power.enabled ||
+                          WS._config.magtag_low_power.display_status_bar;
+  if (!_drvDisp->begin(epd_mode, refresh_on_begin)) {
     WS_DEBUG_PRINTLN("[display] Failed to begin display driver!");
     delete _drvDisp;
     _drvDisp = nullptr;
@@ -272,6 +274,18 @@ void DisplayHardware::showSplash() {
   if (!_drvDisp)
     return;
   _drvDisp->showSplash();
+}
+
+/*!
+    @brief  Enables or disables status bar rendering and layout reservation.
+    @param  enabled
+            True to show and reserve the status bar area, false for full-screen
+            content.
+*/
+void DisplayHardware::setStatusBarEnabled(bool enabled) {
+  if (!_drvDisp)
+    return;
+  _drvDisp->setStatusBarEnabled(enabled);
 }
 
 /*!
@@ -386,6 +400,17 @@ void DisplayHardware::writeMessage(const char *message) {
   if (!_drvDisp)
     return;
   _drvDisp->writeMessage(message);
+}
+
+/*!
+    @brief  Draws a small sleep marker without clearing the displayed content.
+    @param  message
+            The marker text to display.
+*/
+void DisplayHardware::drawSleepMarker(const char *message) {
+  if (!_drvDisp)
+    return;
+  _drvDisp->drawSleepMarker(message);
 }
 
 /*!

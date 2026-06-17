@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+
+load_workbench_env() {
+  local config_file="${ESPWB_CONFIG_FILE:-config/workbench.env}"
+  local name
+  declare -A explicit_env=()
+
+  for name in "$@"; do
+    if [[ ${!name+x} ]]; then
+      explicit_env["$name"]="${!name}"
+    fi
+  done
+
+  if [[ -n "${ESPWB_CONFIG_FILE:-}" && ! -r "$config_file" ]]; then
+    echo "error: ESPWB_CONFIG_FILE does not exist or is not readable: $config_file" >&2
+    return 1
+  fi
+
+  if [[ -r "$config_file" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$config_file"
+    set +a
+  fi
+
+  for name in "${!explicit_env[@]}"; do
+    printf -v "$name" '%s' "${explicit_env[$name]}"
+    declare -gx "$name"
+  done
+}
