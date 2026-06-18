@@ -292,6 +292,10 @@ The status helper also prints the USB identity for the selected slot. Treat
 `MagTag 2.9 Grayscale (239a:00e5)`, the MagTag is in TinyUF2 bootloader mode;
 the workbench socket can accept connections, but firmware app commands such as
 `WSLP STATUS` will not return anything until the WipperSnapper app is running.
+If verified app-only and full TinyUF2 rewrites followed by a workbench EN reset
+still report `239a:00e5`, use a physical MagTag reset or workbench power cycle;
+the remote recovery path can restore the portal but may not make TinyUF2 jump to
+the app in that state.
 
 If you need to bypass `tools/espwb-monitor`, set a local TCP monitor endpoint in
 `config/workbench.env`:

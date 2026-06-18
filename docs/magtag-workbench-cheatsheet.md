@@ -79,6 +79,9 @@ slot.usb: MagTag 2.9 Grayscale (239a:00e5)
 connections. It does not prove the WipperSnapper app is running. If
 `slot.usb` shows `MagTag 2.9 Grayscale (239a:00e5)`, the board is in TinyUF2
 bootloader mode; `WSLP ...` app commands will connect but return no status.
+If a verified TinyUF2 app or full rewrite plus a workbench EN reset still leaves
+the slot at `239a:00e5`, use a physical MagTag reset or workbench power cycle to
+leave TinyUF2.
 
 Quick raw port checks:
 
