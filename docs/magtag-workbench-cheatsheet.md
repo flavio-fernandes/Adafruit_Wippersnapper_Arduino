@@ -29,8 +29,14 @@ commands.
 For raw serial snippets, this is the RFC2217 URL:
 
 ```sh
-export MAGTAG_SERIAL_URL="rfc2217://${WORKBENCH_IP}:4001?ign_set_control"
+export ESPWB_MONITOR_PORT=${ESPWB_MONITOR_PORT:-4001}
+export MAGTAG_SERIAL_URL="rfc2217://${WORKBENCH_IP:?set WORKBENCH_IP first}:${ESPWB_MONITOR_PORT}?ign_set_control"
+printf 'MAGTAG_SERIAL_URL=%s\n' "$MAGTAG_SERIAL_URL"
 ```
+
+If you change `WORKBENCH_IP`, run the `MAGTAG_SERIAL_URL=...` export again.
+Shell variables are expanded when they are assigned, so an old URL can keep an
+empty or stale host.
 
 ## Normal Build
 
@@ -159,7 +165,10 @@ Read low-power status:
 
 ```sh
 $PYTHON -c 'import os, serial, time
-port=os.environ["MAGTAG_SERIAL_URL"]
+workbench_ip=os.environ.get("WORKBENCH_IP", "")
+port=os.environ.get("MAGTAG_SERIAL_URL") or "rfc2217://%s:%s?ign_set_control" % (workbench_ip, os.environ.get("ESPWB_MONITOR_PORT", "4001"))
+if "://:" in port:
+    raise SystemExit("MAGTAG_SERIAL_URL has no host; export WORKBENCH_IP first, then rebuild MAGTAG_SERIAL_URL")
 ser=serial.serial_for_url(port, baudrate=115200, timeout=0.5)
 time.sleep(0.8)
 ser.write(b"WSLP STATUS\n")
@@ -177,7 +186,10 @@ Force a short deep sleep:
 
 ```sh
 $PYTHON -c 'import os, serial, time
-port=os.environ["MAGTAG_SERIAL_URL"]
+workbench_ip=os.environ.get("WORKBENCH_IP", "")
+port=os.environ.get("MAGTAG_SERIAL_URL") or "rfc2217://%s:%s?ign_set_control" % (workbench_ip, os.environ.get("ESPWB_MONITOR_PORT", "4001"))
+if "://:" in port:
+    raise SystemExit("MAGTAG_SERIAL_URL has no host; export WORKBENCH_IP first, then rebuild MAGTAG_SERIAL_URL")
 ser=serial.serial_for_url(port, baudrate=115200, timeout=0.5)
 time.sleep(0.5)
 ser.write(b"WSLP SLEEP 10\n")
@@ -268,11 +280,16 @@ Confirm firmware settings:
 
 ```sh
 export WORKBENCH_IP=<workbench-host-or-ip>
-export MAGTAG_SERIAL_URL="rfc2217://${WORKBENCH_IP}:4001?ign_set_control"
+export ESPWB_MONITOR_PORT=${ESPWB_MONITOR_PORT:-4001}
+export MAGTAG_SERIAL_URL="rfc2217://${WORKBENCH_IP:?set WORKBENCH_IP first}:${ESPWB_MONITOR_PORT}?ign_set_control"
 export PYTHON=.pio/platformio-core/penv/bin/python
 
 $PYTHON -c 'import os, serial, time
-ser=serial.serial_for_url(os.environ["MAGTAG_SERIAL_URL"], baudrate=115200, timeout=0.5)
+workbench_ip=os.environ.get("WORKBENCH_IP", "")
+port=os.environ.get("MAGTAG_SERIAL_URL") or "rfc2217://%s:%s?ign_set_control" % (workbench_ip, os.environ.get("ESPWB_MONITOR_PORT", "4001"))
+if "://:" in port:
+    raise SystemExit("MAGTAG_SERIAL_URL has no host; export WORKBENCH_IP first, then rebuild MAGTAG_SERIAL_URL")
+ser=serial.serial_for_url(port, baudrate=115200, timeout=0.5)
 time.sleep(0.8)
 ser.write(b"WSLP STATUS\n")
 deadline=time.time()+10
@@ -289,7 +306,11 @@ Force sleep and capture the screen:
 
 ```sh
 $PYTHON -c 'import os, serial, time
-ser=serial.serial_for_url(os.environ["MAGTAG_SERIAL_URL"], baudrate=115200, timeout=0.5)
+workbench_ip=os.environ.get("WORKBENCH_IP", "")
+port=os.environ.get("MAGTAG_SERIAL_URL") or "rfc2217://%s:%s?ign_set_control" % (workbench_ip, os.environ.get("ESPWB_MONITOR_PORT", "4001"))
+if "://:" in port:
+    raise SystemExit("MAGTAG_SERIAL_URL has no host; export WORKBENCH_IP first, then rebuild MAGTAG_SERIAL_URL")
+ser=serial.serial_for_url(port, baudrate=115200, timeout=0.5)
 time.sleep(0.5)
 ser.write(b"WSLP SLEEP 10\n")
 deadline=time.time()+4
