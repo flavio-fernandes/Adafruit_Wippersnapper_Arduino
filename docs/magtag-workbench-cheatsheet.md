@@ -17,7 +17,7 @@ settings used by the commands below are:
 
 ```sh
 export ESPWB_SLOT=SLOT1
-export WORKBENCH_IP=192.168.1.235
+export WORKBENCH_IP=<workbench-host-or-ip>
 export ESPWB_MONITOR_PORT=4001
 export ESPWB_SSH_KEY=${HOME}/.ssh/id_rsa
 ```
@@ -77,6 +77,13 @@ nc -z -w 3 "$WORKBENCH_IP" "$ESPWB_MONITOR_PORT"
 ```
 
 ## Flash
+
+Known ESP32-S2 native-USB caveat: repeated MagTag flash/recovery cycles through
+the RFC2217 workbench path can become unstable while the board re-enumerates
+between bootloader USB and application USB. The tracked follow-up is
+<https://github.com/flavio-fernandes/Adafruit_Wippersnapper_Arduino/issues/1>.
+If the workbench wedges repeatedly, use direct workstation USB for the MagTag
+until that issue is fixed.
 
 For normal iteration, flash only the app image:
 
@@ -241,7 +248,7 @@ tools/magtag-workbench-status
 Confirm firmware settings:
 
 ```sh
-export WORKBENCH_IP=192.168.1.235
+export WORKBENCH_IP=<workbench-host-or-ip>
 export MAGTAG_SERIAL_URL="rfc2217://${WORKBENCH_IP}:4001?ign_set_control"
 export PYTHON=.pio/platformio-core/penv/bin/python
 
@@ -333,7 +340,7 @@ If you need to clear stale monitor/RFC2217 processes from the Linux host:
 
 ```sh
 pgrep -af 'tools/espwb-monitor|rfc2217'
-pkill -f 'tools/espwb-monitor|rfc2217://192.168.1.235:4001'
+pkill -f "tools/espwb-monitor|rfc2217://${WORKBENCH_IP}:4001"
 ```
 
 If the board is reachable enough for esptool but the monitor portal is not,

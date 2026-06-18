@@ -132,6 +132,14 @@ Install or copy it from `esp-codex-platform` into `tools/espwb-esptool`. These
 helpers do not call `pio upload`, and they do not use RFC2217 directly for
 flashing.
 
+Known ESP32-S2 native-USB caveat: repeated MagTag flash/recovery cycles through
+the workbench can wedge while the board re-enumerates between bootloader USB and
+application USB. The tracked follow-up is
+<https://github.com/flavio-fernandes/Adafruit_Wippersnapper_Arduino/issues/1>.
+When that path is unstable, connect the MagTag directly to the workstation USB,
+reset it into bootloader mode, and flash the Espressif bootloader serial device
+with `--before no-reset`; let `--after hard-reset` return it to application USB.
+
 ### App-Only Flash
 
 ```sh
