@@ -4,16 +4,22 @@ set -Eeuo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  tools/magtag-flash-workbench --app-only [--yes]
-  tools/magtag-flash-workbench --full --yes
+  tools/magtag-flash-workbench --app-only [--yes] [--direct-usb|--tinyuf2-workbench]
+  tools/magtag-flash-workbench --full --yes [--direct-usb|--tinyuf2-workbench]
 
 Options:
   --app-only   Flash only firmware.bin at 0x10000.
   --full       Flash bootloader, partition table, boot_app0, and firmware.bin.
+  --direct-usb Flash a locally connected MagTag in ESP32-S2 bootloader mode.
+  --tinyuf2-workbench
+              Flash through the workbench-mounted MAGTAGBOOT TinyUF2 volume.
   --yes        Confirm the selected flash operation.
 
 App-only flashing assumes the board already has a compatible bootloader and
 partition table for the MagTag PlatformIO environment.
+
+Direct USB mode uses MAGTAG_DIRECT_USB_PORT, defaulting to:
+  /dev/serial/by-id/usb-Espressif_ESP32-S2_0-if00
 EOF
 }
 
@@ -22,7 +28,11 @@ cd "$repo_root"
 
 # shellcheck source=tools/lib/workbench-env
 source "tools/lib/workbench-env"
-load_workbench_env PLATFORMIO_ENV ESPWB_SLOT
+load_workbench_env \
+  PLATFORMIO_ENV ESPWB_SLOT MAGTAG_FLASH_TRANSPORT MAGTAG_DIRECT_USB_PORT \
+  MAGTAG_DIRECT_USB_BAUD MAGTAG_WORKBENCH_BAUD ESPTOOL \
+  ESPWB_SSH_KEY ESPWB_KNOWN_HOSTS ESPWB_SSH_CONNECT_TIMEOUT \
+  ESPWB_SSH_SERVER_ALIVE_INTERVAL ESPWB_SSH_SERVER_ALIVE_COUNT_MAX
 
 env_name="${PLATFORMIO_ENV:-adafruit_magtag29_esp32s2}"
 slot="${ESPWB_SLOT:-SLOT1}"
@@ -30,6 +40,20 @@ build_dir=".pio/build/$env_name"
 boot_app0=".pio/platformio-core/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
 mode=""
 yes=0
+transport="${MAGTAG_FLASH_TRANSPORT:-workbench}"
+direct_usb_port="${MAGTAG_DIRECT_USB_PORT:-/dev/serial/by-id/usb-Espressif_ESP32-S2_0-if00}"
+direct_usb_baud="${MAGTAG_DIRECT_USB_BAUD:-}"
+workbench_baud="${MAGTAG_WORKBENCH_BAUD:-115200}"
+WORKBENCH_IP="${WORKBENCH_IP:-192.0.2.10}"
+WORKBENCH_USER="${WORKBENCH_USER:-pi}"
+HOST_SSH_DIR="${HOST_SSH_DIR:-/host-ssh}"
+SSH_CONFIG="${SSH_CONFIG:-/dev/null}"
+ESPWB_SSH_CONNECT_TIMEOUT="${ESPWB_SSH_CONNECT_TIMEOUT:-10}"
+ESPWB_SSH_SERVER_ALIVE_INTERVAL="${ESPWB_SSH_SERVER_ALIVE_INTERVAL:-5}"
+ESPWB_SSH_SERVER_ALIVE_COUNT_MAX="${ESPWB_SSH_SERVER_ALIVE_COUNT_MAX:-2}"
+ESPWB_KNOWN_HOSTS="${ESPWB_KNOWN_HOSTS:-}"
+tmpdir=""
+ssh_tmpdir=""
 
 while (($#)); do
   case "$1" in
@@ -40,6 +64,12 @@ while (($#)); do
     --full)
       [[ -z "$mode" ]] || { echo "error: choose only one flash mode" >&2; exit 2; }
       mode="full"
+      ;;
+    --direct-usb)
+      transport="direct-usb"
+      ;;
+    --tinyuf2-workbench)
+      transport="tinyuf2-workbench"
       ;;
     --yes|-y)
       yes=1
@@ -63,11 +93,31 @@ if [[ -z "$mode" ]]; then
   exit 2
 fi
 
-if [[ ! -x "tools/espwb-esptool" ]]; then
+case "$transport" in
+  workbench|direct-usb|tinyuf2-workbench)
+    ;;
+  *)
+    echo "error: unsupported MAGTAG_FLASH_TRANSPORT=$transport" >&2
+    echo "Use 'workbench', 'direct-usb', or 'tinyuf2-workbench'." >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$transport" == "workbench" && ! -x "tools/espwb-esptool" ]]; then
   echo "error: tools/espwb-esptool was not found or is not executable." >&2
   echo "Copy/install it from https://github.com/flavio-fernandes/esp-codex-platform into tools/espwb-esptool." >&2
   exit 1
 fi
+
+cleanup() {
+  if [[ -n "$tmpdir" ]]; then
+    rm -rf "$tmpdir"
+  fi
+  if [[ -n "$ssh_tmpdir" ]]; then
+    rm -rf "$ssh_tmpdir"
+  fi
+}
+trap cleanup EXIT
 
 require_file() {
   local path="$1"
@@ -87,18 +137,323 @@ confirm() {
   [[ "$answer" == "yes" ]] || { echo "aborted"; exit 1; }
 }
 
+find_esptool() {
+  if [[ -n "${ESPTOOL:-}" ]]; then
+    local configured_cmd
+    read -r -a configured_cmd <<<"$ESPTOOL"
+    command -v "${configured_cmd[0]}" >/dev/null 2>&1 || {
+      echo "error: ESPTOOL is set but not executable: $ESPTOOL" >&2
+      exit 1
+    }
+    printf '%s\n' "$ESPTOOL"
+    return 0
+  fi
+
+  if command -v esptool.py >/dev/null 2>&1; then
+    printf '%s\n' "esptool.py"
+    return 0
+  fi
+
+  if command -v esptool >/dev/null 2>&1; then
+    printf '%s\n' "esptool"
+    return 0
+  fi
+
+  if python3 -m esptool version >/dev/null 2>&1; then
+    printf '%s\n' "python3 -m esptool"
+    return 0
+  fi
+
+  echo "error: could not find esptool. Install esptool or set ESPTOOL." >&2
+  exit 1
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "error: missing required command: $1" >&2
+    exit 1
+  }
+}
+
+quote_arg() {
+  local s="$1"
+  printf "'%s'" "${s//\'/\'\\\'\'}"
+}
+
+find_ssh_key() {
+  if [[ -n "${ESPWB_SSH_KEY:-}" ]]; then
+    [[ -r "$ESPWB_SSH_KEY" ]] || {
+      echo "error: ESPWB_SSH_KEY is set but not readable: $ESPWB_SSH_KEY" >&2
+      exit 1
+    }
+    printf '%s\n' "$ESPWB_SSH_KEY"
+    return 0
+  fi
+
+  local candidate
+  for candidate in \
+    "$HOST_SSH_DIR/id_ed25519" \
+    "$HOST_SSH_DIR/id_ecdsa" \
+    "$HOST_SSH_DIR/id_rsa"
+  do
+    if [[ -r "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  echo "error: no readable SSH key found under $HOST_SSH_DIR" >&2
+  echo "Set ESPWB_SSH_KEY to a readable key path if needed." >&2
+  exit 1
+}
+
+prepare_ssh() {
+  need ssh
+  need scp
+  need ssh-keyscan
+  need mktemp
+
+  ssh_tmpdir="$(mktemp -d)"
+  local key_src="$1"
+  tmp_key="$ssh_tmpdir/espwb_ssh_key"
+  known_hosts="$ssh_tmpdir/known_hosts"
+
+  cp "$key_src" "$tmp_key"
+  chmod 0600 "$tmp_key"
+
+  if [[ -n "$ESPWB_KNOWN_HOSTS" ]]; then
+    [[ -r "$ESPWB_KNOWN_HOSTS" ]] || {
+      echo "error: ESPWB_KNOWN_HOSTS is set but not readable: $ESPWB_KNOWN_HOSTS" >&2
+      exit 1
+    }
+    cp "$ESPWB_KNOWN_HOSTS" "$known_hosts"
+  elif ! ssh-keyscan -T "$ESPWB_SSH_CONNECT_TIMEOUT" "$WORKBENCH_IP" > "$known_hosts" 2>/dev/null; then
+    echo "error: could not read SSH host key from $WORKBENCH_IP" >&2
+    echo "Set ESPWB_KNOWN_HOSTS to a known_hosts file containing the workbench key if ssh-keyscan is unreliable." >&2
+    exit 1
+  fi
+
+  SSH_BASE=(
+    ssh
+    -i "$tmp_key"
+    -F "$SSH_CONFIG"
+    -o BatchMode=yes
+    -o ConnectTimeout="$ESPWB_SSH_CONNECT_TIMEOUT"
+    -o ServerAliveInterval="$ESPWB_SSH_SERVER_ALIVE_INTERVAL"
+    -o ServerAliveCountMax="$ESPWB_SSH_SERVER_ALIVE_COUNT_MAX"
+    -o UserKnownHostsFile="$known_hosts"
+    -o StrictHostKeyChecking=yes
+  )
+
+  SCP_BASE=(
+    scp
+    -i "$tmp_key"
+    -F "$SSH_CONFIG"
+    -o BatchMode=yes
+    -o ConnectTimeout="$ESPWB_SSH_CONNECT_TIMEOUT"
+    -o ServerAliveInterval="$ESPWB_SSH_SERVER_ALIVE_INTERVAL"
+    -o ServerAliveCountMax="$ESPWB_SSH_SERVER_ALIVE_COUNT_MAX"
+    -o UserKnownHostsFile="$known_hosts"
+    -o StrictHostKeyChecking=yes
+  )
+}
+
+make_uf2() {
+  local out="$1"
+  shift
+
+  python3 - "$out" "$@" <<'PY'
+from pathlib import Path
+import struct
+import sys
+
+out = Path(sys.argv[1])
+family = 0xBFDD4EEE
+chunk_size = 256
+chunks = []
+
+for pair in sys.argv[2:]:
+    addr_s, path_s = pair.split(":", 1)
+    addr = int(addr_s, 0)
+    data = Path(path_s).read_bytes()
+    for offset in range(0, len(data), chunk_size):
+        chunks.append((addr + offset, data[offset:offset + chunk_size]))
+
+with out.open("wb") as f:
+    for block_no, (addr, chunk) in enumerate(chunks):
+        header = struct.pack(
+            "<IIIIIIII",
+            0x0A324655,
+            0x9E5D5157,
+            0x00002000,
+            addr,
+            len(chunk),
+            block_no,
+            len(chunks),
+            family,
+        )
+        block = header + chunk + bytes(476 - len(chunk)) + struct.pack("<I", 0x0AB16F30)
+        if len(block) != 512:
+            raise SystemExit(f"internal error: UF2 block is {len(block)} bytes")
+        f.write(block)
+
+print(f"{out} ({out.stat().st_size} bytes, {len(chunks)} UF2 blocks)")
+PY
+}
+
+run_tinyuf2_workbench_flash() {
+  local uf2="$1"
+  local key_src remote_uf2 wb remote_cmd
+
+  key_src="$(find_ssh_key)"
+  prepare_ssh "$key_src"
+
+  wb="${WORKBENCH_USER}@${WORKBENCH_IP}"
+  remote_uf2="/tmp/magtag-flash-$(date +%s)-$$.uf2"
+
+  echo "TinyUF2 UF2 image: $uf2"
+  echo "Workbench slot: $ESPWB_SLOT"
+  echo "Workbench host: $wb"
+  echo "== uploading UF2 to workbench =="
+  "${SCP_BASE[@]}" "$uf2" "$wb:$remote_uf2"
+
+  remote_cmd="
+set -euo pipefail
+mountpoint_dir=/tmp/magtagboot
+cleanup_remote() {
+  sudo umount \"\$mountpoint_dir\" 2>/dev/null || true
+  rm -f $(quote_arg "$remote_uf2")
+  sudo systemctl start rfc2217-portal >/dev/null 2>&1 || true
+}
+trap cleanup_remote EXIT
+sudo systemctl stop rfc2217-portal || true
+sudo mkdir -p \"\$mountpoint_dir\"
+if ! mountpoint -q \"\$mountpoint_dir\"; then
+  if [ -e /dev/disk/by-label/MAGTAGBOOT ]; then
+    sudo mount /dev/disk/by-label/MAGTAGBOOT \"\$mountpoint_dir\"
+  elif [ -e /dev/sda ]; then
+    sudo mount /dev/sda \"\$mountpoint_dir\"
+  else
+    echo 'ERROR: MAGTAGBOOT volume is not present on the workbench' >&2
+    sudo systemctl start rfc2217-portal || true
+    exit 66
+  fi
+fi
+echo '== writing UF2 to MAGTAGBOOT =='
+sudo cp $(quote_arg "$remote_uf2") \"\$mountpoint_dir/FIRMWARE.UF2\"
+sync
+sudo umount \"\$mountpoint_dir\" || true
+sleep 10
+if ! mountpoint -q \"\$mountpoint_dir\"; then
+  if [ -e /dev/disk/by-label/MAGTAGBOOT ]; then
+    sudo mount -o ro /dev/disk/by-label/MAGTAGBOOT \"\$mountpoint_dir\"
+  elif [ -e /dev/sda ]; then
+    sudo mount -o ro /dev/sda \"\$mountpoint_dir\"
+  fi
+fi
+if mountpoint -q \"\$mountpoint_dir\"; then
+  echo '== verifying CURRENT.UF2 against requested UF2 blocks =='
+  python3 - $(quote_arg "$remote_uf2") \"\$mountpoint_dir/CURRENT.UF2\" <<'PY'
+import struct
+import sys
+
+def read_uf2(path):
+    data = {}
+    with open(path, 'rb') as f:
+        while True:
+            block = f.read(512)
+            if not block:
+                break
+            if len(block) != 512:
+                raise SystemExit(f'{path}: short UF2 block')
+            magic0, magic1, flags, addr, size, block_no, blocks, family = struct.unpack('<IIIIIIII', block[:32])
+            if magic0 != 0x0A324655 or magic1 != 0x9E5D5157:
+                raise SystemExit(f'{path}: invalid UF2 magic')
+            data[addr] = block[32:32 + size]
+    return data
+
+requested = read_uf2(sys.argv[1])
+current = read_uf2(sys.argv[2])
+missing = []
+mismatch = []
+for addr, chunk in requested.items():
+    got = current.get(addr)
+    if got is None:
+        missing.append(addr)
+    elif got[:len(chunk)] != chunk:
+        mismatch.append(addr)
+print(f'UF2 verify: requested_blocks={len(requested)} missing={len(missing)} mismatch={len(mismatch)}')
+if missing or mismatch:
+    if missing:
+        print(f'first_missing=0x{missing[0]:x}')
+    if mismatch:
+        print(f'first_mismatch=0x{mismatch[0]:x}')
+    raise SystemExit(1)
+PY
+  sudo umount \"\$mountpoint_dir\" || true
+else
+  echo 'WARNING: MAGTAGBOOT did not reappear for CURRENT.UF2 verification' >&2
+fi
+"
+
+  "${SSH_BASE[@]}" "$wb" "$remote_cmd"
+}
+
+run_direct_usb_flash() {
+  if [[ ! -e "$direct_usb_port" ]]; then
+    cat >&2 <<EOF
+error: direct USB bootloader port is missing: $direct_usb_port
+Reset the MagTag into ESP32-S2 bootloader mode, or set MAGTAG_DIRECT_USB_PORT.
+EOF
+    exit 1
+  fi
+
+  echo "Direct USB port: $direct_usb_port"
+  echo "Reset mode: --before no-reset, --after hard-reset"
+
+  local esptool_cmd
+  if ! esptool_cmd="$(find_esptool)"; then
+    exit 1
+  fi
+
+  local cmd
+  read -r -a cmd <<<"$esptool_cmd"
+  cmd+=(--chip esp32s2 --port "$direct_usb_port")
+  if [[ -n "$direct_usb_baud" ]]; then
+    cmd+=(--baud "$direct_usb_baud")
+  fi
+  cmd+=(--before no-reset --after hard-reset write-flash "$@")
+
+  printf '+'
+  printf ' %q' "${cmd[@]}"
+  printf '\n'
+  exec "${cmd[@]}"
+}
+
 export ESPWB_SLOT="$slot"
+export ESPWB_POST_OPERATION_RECOVER="${ESPWB_POST_OPERATION_RECOVER:-0}"
+export ESPWB_LOCAL_GPIO_RESET="${ESPWB_LOCAL_GPIO_RESET:-1}"
 
 if [[ "$mode" == "app-only" ]]; then
   firmware="$build_dir/firmware.bin"
   require_file "$firmware"
   echo "Mode: app-only"
-  echo "Workbench slot: $ESPWB_SLOT"
   echo "Warning: app-only flashing assumes the existing bootloader and partition table are compatible."
   echo "Flash plan:"
   echo "  0x10000  $firmware"
-  echo "+ tools/espwb-esptool write-flash 0x10000 $firmware"
-  exec tools/espwb-esptool write-flash 0x10000 "$firmware"
+  if [[ "$transport" == "direct-usb" ]]; then
+    run_direct_usb_flash 0x10000 "$firmware"
+  fi
+  if [[ "$transport" == "tinyuf2-workbench" ]]; then
+    [[ -n "$tmpdir" ]] || tmpdir="$(mktemp -d)"
+    tinyuf2="$tmpdir/magtag-app.uf2"
+    make_uf2 "$tinyuf2" "0x10000:$firmware"
+    run_tinyuf2_workbench_flash "$tinyuf2"
+    exit 0
+  fi
+  echo "Workbench slot: $ESPWB_SLOT"
+  echo "+ tools/espwb-esptool --baud $workbench_baud write-flash 0x10000 $firmware"
+  exec tools/espwb-esptool --baud "$workbench_baud" write-flash 0x10000 "$firmware"
 fi
 
 require_file "$build_dir/bootloader.bin"
@@ -107,15 +462,33 @@ require_file "$boot_app0"
 require_file "$build_dir/firmware.bin"
 
 echo "Mode: full"
-echo "Workbench slot: $ESPWB_SLOT"
 echo "Flash plan:"
 echo "  0x1000   $build_dir/bootloader.bin"
 echo "  0x8000   $build_dir/partitions.bin"
 echo "  0xe000   $boot_app0"
 echo "  0x10000  $build_dir/firmware.bin"
 confirm "Full flash rewrites bootloader, partition table, boot_app0, and app firmware."
-echo "+ tools/espwb-esptool write-flash 0x1000 $build_dir/bootloader.bin 0x8000 $build_dir/partitions.bin 0xe000 $boot_app0 0x10000 $build_dir/firmware.bin"
-exec tools/espwb-esptool write-flash \
+if [[ "$transport" == "direct-usb" ]]; then
+  run_direct_usb_flash \
+    0x1000 "$build_dir/bootloader.bin" \
+    0x8000 "$build_dir/partitions.bin" \
+    0xe000 "$boot_app0" \
+    0x10000 "$build_dir/firmware.bin"
+fi
+if [[ "$transport" == "tinyuf2-workbench" ]]; then
+  [[ -n "$tmpdir" ]] || tmpdir="$(mktemp -d)"
+  tinyuf2="$tmpdir/magtag-full.uf2"
+  make_uf2 "$tinyuf2" \
+    "0x1000:$build_dir/bootloader.bin" \
+    "0x8000:$build_dir/partitions.bin" \
+    "0xe000:$boot_app0" \
+    "0x10000:$build_dir/firmware.bin"
+  run_tinyuf2_workbench_flash "$tinyuf2"
+  exit 0
+fi
+echo "Workbench slot: $ESPWB_SLOT"
+echo "+ tools/espwb-esptool --baud $workbench_baud write-flash 0x1000 $build_dir/bootloader.bin 0x8000 $build_dir/partitions.bin 0xe000 $boot_app0 0x10000 $build_dir/firmware.bin"
+exec tools/espwb-esptool --baud "$workbench_baud" write-flash \
   0x1000 "$build_dir/bootloader.bin" \
   0x8000 "$build_dir/partitions.bin" \
   0xe000 "$boot_app0" \

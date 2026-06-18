@@ -43,7 +43,7 @@ echo "Workbench slot: $slot"
 
 if [[ -x "tools/espwb-esptool" ]]; then
   echo "== trying reset-aware recovery through tools/espwb-esptool flash-id =="
-  if tools/espwb-esptool flash-id; then
+  if ESPWB_LOCAL_GPIO_RESET="${ESPWB_LOCAL_GPIO_RESET:-1}" ESPWB_POST_OPERATION_RECOVER="${ESPWB_POST_OPERATION_RECOVER:-0}" tools/espwb-esptool flash-id; then
     wait_for_port 5 || true
     exit 0
   fi

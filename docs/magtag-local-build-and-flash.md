@@ -133,17 +133,46 @@ helpers do not call `pio upload`, and they do not use RFC2217 directly for
 flashing.
 
 Known ESP32-S2 native-USB caveat: repeated MagTag flash/recovery cycles through
-the workbench can wedge while the board re-enumerates between bootloader USB and
-application USB. The tracked follow-up is
+RFC2217/esptool on the Raspberry Pi workbench are not reliable enough for normal
+iteration. During issue #1 debugging, compressed stub writes stopped mid-transfer
+or failed MD5 verification, and slower no-stub writes still eventually stopped
+responding. Prefer TinyUF2 mass-storage flashing for MagTag workbench use. The
+tracked follow-up is
 <https://github.com/flavio-fernandes/Adafruit_Wippersnapper_Arduino/issues/1>.
-When that path is unstable, connect the MagTag directly to the workstation USB,
-reset it into bootloader mode, and flash the Espressif bootloader serial device
-with `--before no-reset`; let `--after hard-reset` return it to application USB.
+
+When the MagTag is exposing `MAGTAGBOOT`, use the TinyUF2 workbench transport:
+
+```sh
+tools/magtag-flash-workbench --app-only --yes --tinyuf2-workbench
+tools/magtag-flash-workbench --full --yes --tinyuf2-workbench
+```
+
+The helper generates a UF2, copies it to the workbench, writes it to the
+`MAGTAGBOOT` volume, and verifies the requested UF2 blocks against
+`CURRENT.UF2`. It stops `rfc2217-portal` only while the volume is mounted and
+uses remote cleanup so the portal is restarted even if verification fails.
+
+When TinyUF2 is not available, connect the MagTag directly to the workstation
+USB, reset it into bootloader mode, and add `--direct-usb` to the flash helper.
+Direct USB mode flashes the Espressif bootloader serial device with
+`--before no-reset` and lets `--after hard-reset` return it to application USB.
 
 ### App-Only Flash
 
 ```sh
 tools/magtag-flash-workbench --app-only
+```
+
+Direct workstation USB fallback:
+
+```sh
+tools/magtag-flash-workbench --app-only --direct-usb
+```
+
+TinyUF2 workbench transport:
+
+```sh
+tools/magtag-flash-workbench --app-only --yes --tinyuf2-workbench
 ```
 
 This flashes:
@@ -162,6 +191,18 @@ bootloader and partition table are correct for this MagTag build.
 tools/magtag-flash-workbench --full --yes
 ```
 
+Direct workstation USB fallback:
+
+```sh
+tools/magtag-flash-workbench --full --yes --direct-usb
+```
+
+TinyUF2 workbench transport:
+
+```sh
+tools/magtag-flash-workbench --full --yes --tinyuf2-workbench
+```
+
 This flashes:
 
 ```text
@@ -175,10 +216,43 @@ Full flash rewrites bootloader, partition table, boot app image, and firmware.
 The helper requires `--yes` or an interactive `yes` confirmation before it runs.
 It refuses to flash if any expected file is missing.
 
+Direct USB mode defaults to the ESP32-S2 bootloader by-id path:
+
+```sh
+/dev/serial/by-id/usb-Espressif_ESP32-S2_0-if00
+```
+
+Override it for another local serial path:
+
+```sh
+MAGTAG_DIRECT_USB_PORT=/dev/ttyACM0 tools/magtag-flash-workbench --app-only --direct-usb
+```
+
 The app offset is verified from `tinyuf2-partitions-4MB-noota.csv`, where
 `ota_0` starts at `0x10000`. The bootloader, partition table, and `boot_app0`
 offsets match the Arduino-ESP32 PlatformIO framework image list for ESP32-S2
 Arduino builds.
+
+### Workbench Lessons For esp-codex-platform
+
+The MagTag issue #1 debug session produced a few lessons that should be portable
+to `flavio-fernandes/esp-codex-platform`:
+
+- Remote operations that stop `rfc2217-portal` need a remote `EXIT` cleanup trap
+  that unmounts volumes, removes temporary files, and restarts the portal.
+- Fixed-slot recovery cannot infer a USB sysfs device from slot keys like
+  `_fixed_SLOT1`; helpers should capture USB topology from the resolved devnode
+  before stopping the portal.
+- Native USB boards need transport-specific strategies. For MagTag ESP32-S2,
+  TinyUF2 mass storage with `CURRENT.UF2` verification was more reliable than
+  RFC2217/esptool writes over the Pi USB path.
+- UF2 verification should compare requested bytes for final partial blocks,
+  because `CURRENT.UF2` may expose full flash-aligned blocks.
+- `ESPWB_KNOWN_HOSTS` support helps during recovery because `ssh-keyscan` can be
+  unreliable while the workbench is degraded.
+- RFC2217 proxy startup should retry when the proxy process starts but the TCP
+  port is not listening yet; native USB boards can enumerate before the serial
+  endpoint is ready for a stable proxy.
 
 ## Monitor
 

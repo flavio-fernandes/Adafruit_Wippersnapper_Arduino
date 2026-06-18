@@ -34,6 +34,14 @@ Useful values to set locally:
 - `ESPWB_KNOWN_HOSTS` when the workbench is reachable by SSH but `ssh-keyscan`
   is unreliable during recovery. The helper still uses strict host-key
   checking against the supplied known_hosts file.
+- `MAGTAG_FLASH_TRANSPORT=tinyuf2-workbench` to make
+  `tools/magtag-flash-workbench` use the verified MAGTAGBOOT workbench path by
+  default for MagTag ESP32-S2 native USB.
+- `MAGTAG_DIRECT_USB_PORT` when using
+  `tools/magtag-flash-workbench --direct-usb` with a local bootloader serial
+  path other than `/dev/serial/by-id/usb-Espressif_ESP32-S2_0-if00`.
+- `MAGTAG_DIRECT_USB_BAUD` to pass an explicit baud rate to esptool in direct
+  USB mode.
 - `WORKBENCH_CAMERA_DEVICE` when using `tools/workbench-camera-capture` on a
   host with multiple V4L2 cameras.
 - `ESPWB_MONITOR_IDLE_TIMEOUT`, default `300`, exits a quiet RFC2217 monitor so

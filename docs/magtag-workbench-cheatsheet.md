@@ -79,11 +79,10 @@ nc -z -w 3 "$WORKBENCH_IP" "$ESPWB_MONITOR_PORT"
 ## Flash
 
 Known ESP32-S2 native-USB caveat: repeated MagTag flash/recovery cycles through
-the RFC2217 workbench path can become unstable while the board re-enumerates
-between bootloader USB and application USB. The tracked follow-up is
+the RFC2217 workbench path are not reliable enough for normal iteration on the
+Raspberry Pi workbench. Prefer TinyUF2 workbench flashing when the board exposes
+`MAGTAGBOOT`. The tracked follow-up is
 <https://github.com/flavio-fernandes/Adafruit_Wippersnapper_Arduino/issues/1>.
-If the workbench wedges repeatedly, use direct workstation USB for the MagTag
-until that issue is fixed.
 
 For normal iteration, flash only the app image:
 
@@ -98,6 +97,26 @@ For a full image rewrite:
 ESPWB_SSH_KEY=${HOME}/.ssh/id_rsa \
   tools/magtag-flash-workbench --full --yes
 ```
+
+Reliable MagTag workbench path through TinyUF2:
+
+```sh
+ESPWB_SSH_KEY=${HOME}/.ssh/id_rsa \
+  tools/magtag-flash-workbench --app-only --yes --tinyuf2-workbench
+
+ESPWB_SSH_KEY=${HOME}/.ssh/id_rsa \
+  tools/magtag-flash-workbench --full --yes --tinyuf2-workbench
+```
+
+Direct workstation USB fallback:
+
+```sh
+tools/magtag-flash-workbench --app-only --yes --direct-usb
+tools/magtag-flash-workbench --full --yes --direct-usb
+```
+
+For direct USB, reset the MagTag into ESP32-S2 bootloader mode first. Set
+`MAGTAG_DIRECT_USB_PORT` if your local bootloader serial path differs.
 
 Low-level flash identity check:
 

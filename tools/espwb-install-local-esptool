@@ -18,15 +18,19 @@ ESPWB_KNOWN_HOSTS="${ESPWB_KNOWN_HOSTS:-}"
 usage() {
   cat <<USAGE
 Usage:
-  tools/espwb-ssh remote command...
+  tools/espwb-install-local-esptool
 
-Example:
-  tools/espwb-ssh hostname
-  tools/espwb-ssh test -x /usr/local/bin/espwb-local-esptool
+Installs tools/workbench-local-esptool on the configured workbench as:
+  /usr/local/bin/espwb-local-esptool
 USAGE
 }
 
-if [[ "$#" -lt 1 ]]; then
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  usage
+  exit 0
+fi
+
+if [[ "$#" -ne 0 ]]; then
   usage >&2
   exit 2
 fi
@@ -39,6 +43,7 @@ need() {
 }
 
 need ssh
+need scp
 need ssh-keyscan
 need mktemp
 
@@ -74,15 +79,10 @@ quote_arg() {
   printf "'%s'" "${s//\'/\'\\\'\'}"
 }
 
-quote_cmd() {
-  local arg first=1
-  for arg in "$@"; do
-    if [[ "$first" -eq 0 ]]; then
-      printf ' '
-    fi
-    quote_arg "$arg"
-    first=0
-  done
+SOURCE="${SCRIPT_DIR}/workbench-local-esptool"
+[[ -x "$SOURCE" ]] || {
+  echo "error: missing executable helper: $SOURCE" >&2
+  exit 1
 }
 
 KEY_SRC="$(find_key)"
@@ -110,19 +110,38 @@ elif ! ssh-keyscan -T "$ESPWB_SSH_CONNECT_TIMEOUT" "$WORKBENCH_IP" > "$KNOWN_HOS
   exit 1
 fi
 
-remote_shell_cmd="$(quote_cmd "$@")"
+SSH_BASE=(
+  ssh
+  -i "$TMP_KEY"
+  -F "$SSH_CONFIG"
+  -o BatchMode=yes
+  -o ConnectTimeout="$ESPWB_SSH_CONNECT_TIMEOUT"
+  -o ServerAliveInterval="$ESPWB_SSH_SERVER_ALIVE_INTERVAL"
+  -o ServerAliveCountMax="$ESPWB_SSH_SERVER_ALIVE_COUNT_MAX"
+  -o UserKnownHostsFile="$KNOWN_HOSTS"
+  -o StrictHostKeyChecking=yes
+)
 
-if ! ssh \
-  -i "$TMP_KEY" \
-  -F "$SSH_CONFIG" \
-  -o BatchMode=yes \
-  -o ConnectTimeout="$ESPWB_SSH_CONNECT_TIMEOUT" \
-  -o ServerAliveInterval="$ESPWB_SSH_SERVER_ALIVE_INTERVAL" \
-  -o ServerAliveCountMax="$ESPWB_SSH_SERVER_ALIVE_COUNT_MAX" \
-  -o UserKnownHostsFile="$KNOWN_HOSTS" \
-  -o StrictHostKeyChecking=yes \
-  "${WORKBENCH_USER}@${WORKBENCH_IP}" \
-  "$remote_shell_cmd"; then
-  echo "error: SSH command failed for ${WORKBENCH_USER}@${WORKBENCH_IP}" >&2
-  exit 1
-fi
+SCP_BASE=(
+  scp
+  -i "$TMP_KEY"
+  -F "$SSH_CONFIG"
+  -o BatchMode=yes
+  -o ConnectTimeout="$ESPWB_SSH_CONNECT_TIMEOUT"
+  -o ServerAliveInterval="$ESPWB_SSH_SERVER_ALIVE_INTERVAL"
+  -o ServerAliveCountMax="$ESPWB_SSH_SERVER_ALIVE_COUNT_MAX"
+  -o UserKnownHostsFile="$KNOWN_HOSTS"
+  -o StrictHostKeyChecking=yes
+)
+
+WB="${WORKBENCH_USER}@${WORKBENCH_IP}"
+REMOTE_TMP="/tmp/espwb-local-esptool.$$"
+
+echo "== uploading workbench-local-esptool to ${WB}:${REMOTE_TMP} =="
+"${SCP_BASE[@]}" "$SOURCE" "${WB}:${REMOTE_TMP}"
+
+echo "== installing /usr/local/bin/espwb-local-esptool on ${WB} =="
+remote_cmd="sudo install -m 0755 $(quote_arg "$REMOTE_TMP") /usr/local/bin/espwb-local-esptool && rm -f $(quote_arg "$REMOTE_TMP")"
+"${SSH_BASE[@]}" "$WB" "$remote_cmd"
+
+echo "== installed workbench helper =="
