@@ -16,6 +16,7 @@
 #include "Wippersnapper_Networking.h"
 #include "components/display/controller.h"
 #if defined(ARDUINO_MAGTAG29_ESP32S2)
+#include "driver/rtc_io.h"
 #include "esp_sleep.h"
 #endif
 Wippersnapper_WiFi wipper;
@@ -84,6 +85,28 @@ static void magtagPrepareWakeButtons() {
   for (uint8_t i = 0; i < sizeof(wakePins) / sizeof(wakePins[0]); i++) {
     pinMode(wakePins[i], INPUT_PULLUP);
   }
+}
+
+static void magtagPrepareWakeButtonsForSleep() {
+  const uint8_t wakePins[] = {BUTTON_A, BUTTON_B, BUTTON_C, BUTTON_D};
+  for (uint8_t i = 0; i < sizeof(wakePins) / sizeof(wakePins[0]); i++) {
+    gpio_num_t pin = (gpio_num_t)wakePins[i];
+    rtc_gpio_init(pin);
+    rtc_gpio_set_direction(pin, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pullup_en(pin);
+    rtc_gpio_pulldown_dis(pin);
+  }
+}
+
+static void magtagPrintButtonLevels() {
+  Serial.print(" button_a=");
+  Serial.print(digitalRead(BUTTON_A));
+  Serial.print(" button_b=");
+  Serial.print(digitalRead(BUTTON_B));
+  Serial.print(" button_c=");
+  Serial.print(digitalRead(BUTTON_C));
+  Serial.print(" button_d=");
+  Serial.print(digitalRead(BUTTON_D));
 }
 
 static uint64_t magtagWakeButtonMask() {
@@ -220,6 +243,10 @@ static void magtagEnterDeepSleep(uint32_t sleepSeconds) {
   esp_err_t timerWakeErr =
       esp_sleep_enable_timer_wakeup((uint64_t)sleepSeconds * 1000000ULL);
   magtagPrepareWakeButtons();
+  magtagPrepareWakeButtonsForSleep();
+  Serial.print("WS_MAGTAG_LOW_POWER_SLEEP_BUTTON_LEVELS");
+  magtagPrintButtonLevels();
+  Serial.println();
   esp_err_t buttonWakeErr = esp_sleep_enable_ext1_wakeup(
       magtagWakeButtonMask(), ESP_EXT1_WAKEUP_ANY_LOW);
   if (timerWakeErr != ESP_OK || buttonWakeErr != ESP_OK) {
@@ -267,7 +294,13 @@ static void magtagHandleLowPowerCommand(const char *cmd) {
     Serial.print(" sleep_interval_minutes=");
     Serial.print(magtagSleepIntervalMinutes());
     Serial.print(" queued_button=");
-    Serial.println(magtagButtonEvent.active ? 1 : 0);
+    Serial.print(magtagButtonEvent.active ? 1 : 0);
+    Serial.print(" wake_cause=");
+    Serial.print((int)esp_sleep_get_wakeup_cause());
+    Serial.print(" ext1_mask=0x");
+    Serial.print((uint32_t)esp_sleep_get_ext1_wakeup_status(), HEX);
+    magtagPrintButtonLevels();
+    Serial.println();
   } else {
     Serial.println(
         "WS_MAGTAG_LOW_POWER_COMMANDS WSLP STATUS|BUTTON|AWAKE <seconds>|SLEEP [seconds]");

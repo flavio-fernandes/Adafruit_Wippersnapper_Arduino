@@ -198,3 +198,67 @@ tools/workbench-camera-capture artifacts/magtag-deep-sleep-latest.jpg
   intended press, so it cannot be counted as a successful queued wake test.
 - Next attempt should include wake-cause, EXT1 mask, and button-level diagnostics
   before and after sleep.
+
+## 2026-06-17 Direct-USB Retest And Resolution
+
+The workbench remained too unstable for repeated ESP32-S2 native-USB flash and
+deep-sleep cycles. After each manual reboot it could briefly report SLOT1 as
+healthy, but flashing often failed when the MagTag re-enumerated and
+`/dev/ttyACM0` disappeared during the esptool/portal handoff. Failure modes
+included:
+
+- `could not open port /dev/ttyACM0`
+- `connection failed (reader thread died)`
+- SSH banner timeouts
+- API recovery calls timing out while the HTTP port still accepted TCP
+
+Moving the MagTag directly to argon USB made the test reliable enough to finish.
+The local USB device appeared as:
+
+- Bootloader: `/dev/serial/by-id/usb-Espressif_ESP32-S2_0-if00`
+- Application: `/dev/serial/by-id/usb-Adafruit_EPD_MagTag_2.9__ESP32-S2-if00`
+
+The first direct-USB diagnostic run proved that the earlier "already awake"
+behavior was a real EXT1 false wake, not a Button B success:
+
+```text
+WS_MAGTAG_LOW_POWER_STATUS ... wake_cause=3 ext1_mask=0x800 button_a=1 button_b=1 button_c=1 button_d=1
+```
+
+`0x800` maps to GPIO11/Button D. The pin levels were high by the time status was
+queried, so the likely cause was Button D floating or bouncing low during deep
+sleep entry after the normal GPIO pull-up state was lost.
+
+The fix was to configure the four MagTag front-button pins in the ESP32-S2 RTC
+GPIO domain before enabling EXT1 wake:
+
+- `rtc_gpio_init(pin)`
+- `rtc_gpio_set_direction(pin, RTC_GPIO_MODE_INPUT_ONLY)`
+- `rtc_gpio_pullup_en(pin)`
+- `rtc_gpio_pulldown_dis(pin)`
+
+After flashing that build, `WSLP SLEEP 600` stayed asleep before the intended
+Button B press. The successful wake log was:
+
+```text
+WS_MAGTAG_LOW_POWER_WAKE reason=button mask=0x4000
+WS_MAGTAG_LOW_POWER_BUTTON_QUEUED pin=14
+WS_MAGTAG_LOW_POWER_BUTTON_PUBLISHED pin=14
+```
+
+The final status confirmed the exact wake source and that the queued event was
+cleared after publish:
+
+```text
+WS_MAGTAG_LOW_POWER_STATUS ... queued_button=0 wake_cause=3 ext1_mask=0x4000 button_a=1 button_b=1 button_c=1 button_d=1
+```
+
+`0x4000` maps to GPIO14/Button B, so the physical Button B deep-sleep wake path
+is now verified: Button B woke the MagTag before the 10-minute timer, queued the
+exact GPIO14 event, waited for MQTT connectivity, and published successfully to
+Adafruit IO.
+
+Evidence artifacts from the successful direct-USB run:
+
+- `artifacts/magtag-rtc-pullup-sleep-marker.jpg`
+- `artifacts/magtag-after-button-b-success.jpg`

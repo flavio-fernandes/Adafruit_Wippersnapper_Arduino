@@ -144,6 +144,13 @@ pin. The queued event uses that exact pin, the normal WipperSnapper `pin_event`
 payload, and publishes a `LOW` value because the MagTag buttons use pull-ups and
 wake on low.
 
+Before enabling EXT1 wake, configure the front-button pins in the RTC GPIO
+domain as input-only with RTC pull-ups enabled and pulldowns disabled. The
+normal Arduino `INPUT_PULLUP` configuration is enough while the firmware is
+awake, but it does not reliably hold the pins during ESP32-S2 deep sleep. In
+physical testing, omitting RTC pull-ups allowed Button D/GPIO11 to float low and
+cause an immediate false EXT1 wake before the intended Button B press.
+
 The queued event is sent only after MQTT is connected. If Adafruit IO reports a
 throttle window before the queued event is sent, the firmware waits for the
 throttle to clear and retries with exponential backoff. The queued event expires
@@ -191,7 +198,8 @@ WSLP SLEEP [seconds]
 
 Behavior:
 
-- `WSLP STATUS` prints the current low-power state and timers.
+- `WSLP STATUS` prints the current low-power state, timers, ESP sleep wake
+  cause, EXT1 wake mask, and live A/B/C/D button levels.
 - `WSLP BUTTON` emulates a button wake while the firmware is awake. This resets
   the awake window, logs the same high-level wake reason used by the low-power
   flow, and queues a `BUTTON_A` active-low pin event for publish after MQTT is
@@ -200,6 +208,9 @@ Behavior:
   useful for testing automatic sleep without waiting 10 minutes.
 - `WSLP SLEEP [seconds]` forces the normal sleep-entry path immediately. When a
   value is supplied, that value is used as the timer wake interval for the test.
+  The sleep-entry path also logs A/B/C/D button levels immediately before EXT1
+  wake is enabled, so a held or floating wake pin can be diagnosed from serial
+  output.
 
 Serial cannot press a physical GPIO while the ESP32-S2 is already in deep
 sleep, so `WSLP BUTTON` is a logic-path emulator rather than a hardware wake
