@@ -265,6 +265,48 @@ to `flavio-fernandes/esp-codex-platform`:
   port is not listening yet; native USB boards can enumerate before the serial
   endpoint is ready for a stable proxy.
 
+### Porting Plan For esp-codex-platform
+
+When porting the reusable parts of this work to
+`flavio-fernandes/esp-codex-platform`, keep the scope concrete:
+
+- Workbench reliability behavior:
+  - Ensure remote operations that stop `rfc2217-portal` always use cleanup
+    traps.
+  - Restart the portal on every exit path.
+  - Preserve strict `known_hosts` support via `ESPWB_KNOWN_HOSTS`.
+- Native USB recovery model:
+  - Treat RFC2217/esptool over Raspberry Pi USB as fragile for ESP32-S2 native
+    USB boards.
+  - Prefer transport-specific flashing strategies.
+  - Keep reset-aware recovery, but document its limits when the board is in
+    TinyUF2.
+- TinyUF2 workflow:
+  - Support app-only UF2 writes to `MAGTAGBOOT`.
+  - Verify requested UF2 blocks against `CURRENT.UF2`.
+  - Do not document or allow TinyUF2 as a full bootloader-region recovery path.
+  - Use ESP32 ROM bootloader/direct USB, or another known-good ROM-loader path,
+    for full recovery.
+- Status diagnostics:
+  - Include USB identity in status output.
+  - Distinguish `239a:00e5` as TinyUF2 bootloader mode.
+  - Distinguish `239a:80e5` as the MagTag app USB identity.
+  - Make `serial: reachable` mean only that the portal socket is reachable, not
+    that the app is alive.
+- Documentation to port:
+  - Runtime state table: app running, TinyUF2, deep sleep, portal issue.
+  - Direct-USB recovery steps, including local `esptool` venv setup when
+    `esptool` is missing.
+  - Recovery decision tree: app-only TinyUF2 first, full ROM-bootloader recovery
+    only when the app will not boot.
+  - Lessons learned from issue #1.
+- Optional tool hardening:
+  - Add a guard equivalent to refusing `--full --tinyuf2-workbench`.
+  - Add clearer post-flash guidance for identifying the board state.
+  - Consider a small helper for raw `WSLP STATUS`, `WSLP AWAKE <seconds>`, and
+    `WSLP SLEEP <seconds>` commands so users do not need to paste Python
+    snippets.
+
 ## Monitor
 
 ```sh
