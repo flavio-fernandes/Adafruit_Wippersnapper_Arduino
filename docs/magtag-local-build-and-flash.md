@@ -202,6 +202,16 @@ Direct workstation USB fallback:
 tools/magtag-flash-workbench --full --yes --direct-usb
 ```
 
+If the helper cannot find `esptool`, install it in a local virtual environment
+or set `ESPTOOL` to an existing command:
+
+```sh
+python3 -m venv --copies venv
+. ./venv/bin/activate
+pip install --upgrade pip esptool
+tools/magtag-flash-workbench --full --yes --direct-usb
+```
+
 This flashes:
 
 ```text
@@ -226,7 +236,7 @@ Direct USB mode defaults to the ESP32-S2 bootloader by-id path:
 Override it for another local serial path:
 
 ```sh
-MAGTAG_DIRECT_USB_PORT=/dev/ttyACM0 tools/magtag-flash-workbench --app-only --direct-usb
+MAGTAG_DIRECT_USB_PORT=/dev/ttyACM0 tools/magtag-flash-workbench --full --yes --direct-usb
 ```
 
 The app offset is verified from `tinyuf2-partitions-4MB-noota.csv`, where
@@ -302,7 +312,7 @@ Think of the MagTag as one of these states:
 
 | State | How to identify it | Recovery path |
 | --- | --- | --- |
-| App running | Slot is present/running, serial is reachable, `slot.usb` is not `239a:00e5`, and `WSLP STATUS` prints `WS_MAGTAG_LOW_POWER_STATUS ...`. | No recovery needed. Send `WSLP AWAKE <seconds>` before long debug sessions. |
+| App running | Slot is present/running, serial is reachable, `slot.usb` shows the app USB identity such as `EPD MagTag 2.9" ESP32-S2 (239a:80e5)`, and `WSLP STATUS` prints `WS_MAGTAG_LOW_POWER_STATUS ...`. | No recovery needed. Send `WSLP AWAKE <seconds>` before long debug sessions. |
 | TinyUF2 bootloader | `slot.usb: MagTag 2.9 Grayscale (239a:00e5)`; serial may connect, but `WSLP ...` commands return no app response. | Use `tools/magtag-flash-workbench --app-only --yes --tinyuf2-workbench` for normal app iteration. If a verified app-only write plus reset still stays at `239a:00e5`, recover with a full flash through the ESP32-S2 ROM bootloader/direct USB path. |
 | Deep sleep | USB serial disappears or stays quiet until the app wakes; `WSLP ...` cannot respond while the ESP32-S2 is asleep. | Wait for the sleep timer, press a configured MagTag wake button, or press reset. Reset exits deep sleep by doing a fresh boot. |
 | Workbench portal issue | Host/API may be reachable but serial is refused, slot is not running, or `last_error` is set. | Run `tools/magtag-recover-workbench`, then re-check `tools/magtag-workbench-status`. |
@@ -336,6 +346,30 @@ bootloader mode on direct USB and run:
 
 ```sh
 tools/magtag-flash-workbench --full --yes --direct-usb
+```
+
+If the helper reports `error: could not find esptool`, install it in a local
+venv as shown in the full-flash section above, activate the venv, and rerun the
+same direct-USB command.
+
+After a successful direct-USB full flash, plug the MagTag back into the workbench
+slot and confirm the app is running:
+
+```sh
+tools/magtag-workbench-status
+```
+
+Expected app identity:
+
+```text
+slot.usb: EPD MagTag 2.9" ESP32-S2 (239a:80e5)
+```
+
+Then verify the firmware backdoor responds and optionally keep the board awake:
+
+```text
+WSLP STATUS
+WSLP AWAKE 3600
 ```
 
 If full direct-USB flash fails, verify the cable, board power, bootloader mode,

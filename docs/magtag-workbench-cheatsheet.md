@@ -84,7 +84,7 @@ Use `tools/magtag-workbench-status` first, then match the state below:
 
 | State | What status usually shows | What it means | Way out |
 | --- | --- | --- | --- |
-| App running | Slot present/running, serial reachable, `slot.usb` is not `239a:00e5`, and `WSLP STATUS` returns `WS_MAGTAG_LOW_POWER_STATUS ...` | WipperSnapper is running and can accept serial backdoor commands. | No recovery needed. Use `WSLP AWAKE <seconds>` to keep it awake while debugging. |
+| App running | Slot present/running, serial reachable, `slot.usb` shows an app identity such as `EPD MagTag 2.9" ESP32-S2 (239a:80e5)`, and `WSLP STATUS` returns `WS_MAGTAG_LOW_POWER_STATUS ...` | WipperSnapper is running and can accept serial backdoor commands. | No recovery needed. Use `WSLP AWAKE <seconds>` to keep it awake while debugging. |
 | TinyUF2 bootloader | `slot.usb: MagTag 2.9 Grayscale (239a:00e5)` and `WSLP ...` commands return nothing | The board is exposing `MAGTAGBOOT`; the app is not running. | Use `--app-only --tinyuf2-workbench` for normal app iteration. If a verified app-only write plus reset still leaves `239a:00e5`, recover with a full flash through ESP32-S2 ROM bootloader/direct USB, not TinyUF2. |
 | Deep sleep | Slot may disappear, serial may be unreachable, or the portal may reconnect only after wake; `WSLP ...` cannot respond while asleep | The app intentionally shut down the ESP32-S2 and USB serial is gone. | Wait for timer wake, press a configured MagTag wake button, or press reset. Reset exits deep sleep by starting a fresh boot. |
 | Portal/recovery issue | Host/API may be reachable but serial is refused, slot is not running, or `last_error` is set | The workbench service/portal is out of sync with USB state. | Run `tools/magtag-recover-workbench`, then check status again. |
@@ -131,6 +131,22 @@ ESP32-S2 ROM bootloader mode and use direct USB:
 
 ```sh
 tools/magtag-flash-workbench --full --yes --direct-usb
+```
+
+If `esptool` is missing on the workstation:
+
+```sh
+python3 -m venv --copies venv
+. ./venv/bin/activate
+pip install --upgrade pip esptool
+tools/magtag-flash-workbench --full --yes --direct-usb
+```
+
+After direct-USB recovery, plug the MagTag back into SLOT1. The app-running
+identity should look like:
+
+```text
+slot.usb: EPD MagTag 2.9" ESP32-S2 (239a:80e5)
 ```
 
 Direct workstation USB fallback:
