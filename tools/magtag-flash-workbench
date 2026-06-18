@@ -5,14 +5,15 @@ usage() {
   cat <<'EOF'
 Usage:
   tools/magtag-flash-workbench --app-only [--yes] [--direct-usb|--tinyuf2-workbench]
-  tools/magtag-flash-workbench --full --yes [--direct-usb|--tinyuf2-workbench]
+  tools/magtag-flash-workbench --full --yes [--direct-usb]
 
 Options:
   --app-only   Flash only firmware.bin at 0x10000.
   --full       Flash bootloader, partition table, boot_app0, and firmware.bin.
   --direct-usb Flash a locally connected MagTag in ESP32-S2 bootloader mode.
   --tinyuf2-workbench
-              Flash through the workbench-mounted MAGTAGBOOT TinyUF2 volume.
+              Flash the app through the workbench-mounted MAGTAGBOOT TinyUF2
+              volume.
   --yes        Confirm the selected flash operation.
 
 App-only flashing assumes the board already has a compatible bootloader and
@@ -20,6 +21,9 @@ partition table for the MagTag PlatformIO environment.
 
 Direct USB mode uses MAGTAG_DIRECT_USB_PORT, defaulting to:
   /dev/serial/by-id/usb-Espressif_ESP32-S2_0-if00
+
+Full recovery should use the ESP32-S2 ROM bootloader path, not TinyUF2. TinyUF2
+is suitable for app-only iteration when MAGTAGBOOT is present.
 EOF
 }
 
@@ -107,6 +111,24 @@ if [[ "$transport" == "workbench" && ! -x "tools/espwb-esptool" ]]; then
   echo "error: tools/espwb-esptool was not found or is not executable." >&2
   echo "Copy/install it from https://github.com/flavio-fernandes/esp-codex-platform into tools/espwb-esptool." >&2
   exit 1
+fi
+
+if [[ "$mode" == "full" && "$transport" == "tinyuf2-workbench" ]]; then
+  cat >&2 <<'EOF'
+error: refusing --full --tinyuf2-workbench.
+
+TinyUF2 is the recovery surface currently running from flash, so using it to
+rewrite bootloader-region images is not a reliable unbrick path. Use app-only
+TinyUF2 for normal iteration:
+
+  tools/magtag-flash-workbench --app-only --yes --tinyuf2-workbench
+
+For full recovery, put the MagTag into the ESP32-S2 ROM bootloader and flash
+with direct USB or a known-good ROM-bootloader workbench path:
+
+  tools/magtag-flash-workbench --full --yes --direct-usb
+EOF
+  exit 2
 fi
 
 cleanup() {

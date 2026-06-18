@@ -144,13 +144,18 @@ When the MagTag is exposing `MAGTAGBOOT`, use the TinyUF2 workbench transport:
 
 ```sh
 tools/magtag-flash-workbench --app-only --yes --tinyuf2-workbench
-tools/magtag-flash-workbench --full --yes --tinyuf2-workbench
 ```
 
 The helper generates a UF2, copies it to the workbench, writes it to the
 `MAGTAGBOOT` volume, and verifies the requested UF2 blocks against
 `CURRENT.UF2`. It stops `rfc2217-portal` only while the volume is mounted and
 uses remote cleanup so the portal is restarted even if verification fails.
+
+Use TinyUF2 for app-only iteration. Do not use TinyUF2 as the full unbrick path:
+the TinyUF2 bootloader is the recovery surface currently running from flash, so
+rewriting bootloader-region images through it is not reliable enough to document
+as recovery. If the board stays in TinyUF2 after a verified app-only UF2 write
+and reset, use the ESP32-S2 ROM bootloader path and do a full direct-USB flash.
 
 When TinyUF2 is not available, connect the MagTag directly to the workstation
 USB, reset it into bootloader mode, and add `--direct-usb` to the flash helper.
@@ -197,12 +202,6 @@ Direct workstation USB fallback:
 tools/magtag-flash-workbench --full --yes --direct-usb
 ```
 
-TinyUF2 workbench transport:
-
-```sh
-tools/magtag-flash-workbench --full --yes --tinyuf2-workbench
-```
-
 This flashes:
 
 ```text
@@ -213,8 +212,10 @@ This flashes:
 ```
 
 Full flash rewrites bootloader, partition table, boot app image, and firmware.
-The helper requires `--yes` or an interactive `yes` confirmation before it runs.
-It refuses to flash if any expected file is missing.
+Use it through direct USB or another known-good ESP32-S2 ROM bootloader path,
+not through TinyUF2. The helper requires `--yes` or an interactive `yes`
+confirmation before it runs. It refuses to flash if any expected file is
+missing.
 
 Direct USB mode defaults to the ESP32-S2 bootloader by-id path:
 
@@ -302,7 +303,7 @@ Think of the MagTag as one of these states:
 | State | How to identify it | Recovery path |
 | --- | --- | --- |
 | App running | Slot is present/running, serial is reachable, `slot.usb` is not `239a:00e5`, and `WSLP STATUS` prints `WS_MAGTAG_LOW_POWER_STATUS ...`. | No recovery needed. Send `WSLP AWAKE <seconds>` before long debug sessions. |
-| TinyUF2 bootloader | `slot.usb: MagTag 2.9 Grayscale (239a:00e5)`; serial may connect, but `WSLP ...` commands return no app response. | Use `tools/magtag-flash-workbench --app-only --yes --tinyuf2-workbench` or `--full`. If verified writes plus workbench EN reset still stay at `239a:00e5`, press the physical reset button or power-cycle the workbench. |
+| TinyUF2 bootloader | `slot.usb: MagTag 2.9 Grayscale (239a:00e5)`; serial may connect, but `WSLP ...` commands return no app response. | Use `tools/magtag-flash-workbench --app-only --yes --tinyuf2-workbench` for normal app iteration. If a verified app-only write plus reset still stays at `239a:00e5`, recover with a full flash through the ESP32-S2 ROM bootloader/direct USB path. |
 | Deep sleep | USB serial disappears or stays quiet until the app wakes; `WSLP ...` cannot respond while the ESP32-S2 is asleep. | Wait for the sleep timer, press a configured MagTag wake button, or press reset. Reset exits deep sleep by doing a fresh boot. |
 | Workbench portal issue | Host/API may be reachable but serial is refused, slot is not running, or `last_error` is set. | Run `tools/magtag-recover-workbench`, then re-check `tools/magtag-workbench-status`. |
 
@@ -329,10 +330,16 @@ the camera under a different path, such as `/dev/video0`.
 
 ## Recovery Notes
 
-If the board does not boot after an app-only flash, do a full flash so the
-bootloader and partition table match the current PlatformIO environment. If full
-flash fails, verify the workbench slot, cabling, board power, and that
-`tools/espwb-esptool flash-id` works before flashing again.
+If the board does not boot after an app-only TinyUF2 flash, do not keep
+rewriting full images through TinyUF2. Put the MagTag into ESP32-S2 ROM
+bootloader mode on direct USB and run:
+
+```sh
+tools/magtag-flash-workbench --full --yes --direct-usb
+```
+
+If full direct-USB flash fails, verify the cable, board power, bootloader mode,
+and `MAGTAG_DIRECT_USB_PORT` before flashing again.
 
 Do not commit:
 

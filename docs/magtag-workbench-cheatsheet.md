@@ -85,7 +85,7 @@ Use `tools/magtag-workbench-status` first, then match the state below:
 | State | What status usually shows | What it means | Way out |
 | --- | --- | --- | --- |
 | App running | Slot present/running, serial reachable, `slot.usb` is not `239a:00e5`, and `WSLP STATUS` returns `WS_MAGTAG_LOW_POWER_STATUS ...` | WipperSnapper is running and can accept serial backdoor commands. | No recovery needed. Use `WSLP AWAKE <seconds>` to keep it awake while debugging. |
-| TinyUF2 bootloader | `slot.usb: MagTag 2.9 Grayscale (239a:00e5)` and `WSLP ...` commands return nothing | The board is exposing `MAGTAGBOOT`; the app is not running. | Flash with `--tinyuf2-workbench`. If verified app-only/full UF2 rewrites plus a workbench EN reset still leave `239a:00e5`, press the physical MagTag reset button or power-cycle the workbench. |
+| TinyUF2 bootloader | `slot.usb: MagTag 2.9 Grayscale (239a:00e5)` and `WSLP ...` commands return nothing | The board is exposing `MAGTAGBOOT`; the app is not running. | Use `--app-only --tinyuf2-workbench` for normal app iteration. If a verified app-only write plus reset still leaves `239a:00e5`, recover with a full flash through ESP32-S2 ROM bootloader/direct USB, not TinyUF2. |
 | Deep sleep | Slot may disappear, serial may be unreachable, or the portal may reconnect only after wake; `WSLP ...` cannot respond while asleep | The app intentionally shut down the ESP32-S2 and USB serial is gone. | Wait for timer wake, press a configured MagTag wake button, or press reset. Reset exits deep sleep by starting a fresh boot. |
 | Portal/recovery issue | Host/API may be reachable but serial is refused, slot is not running, or `last_error` is set | The workbench service/portal is out of sync with USB state. | Run `tools/magtag-recover-workbench`, then check status again. |
 
@@ -124,9 +124,13 @@ Reliable MagTag workbench path through TinyUF2:
 ```sh
 ESPWB_SSH_KEY=${HOME}/.ssh/id_rsa \
   tools/magtag-flash-workbench --app-only --yes --tinyuf2-workbench
+```
 
-ESPWB_SSH_KEY=${HOME}/.ssh/id_rsa \
-  tools/magtag-flash-workbench --full --yes --tinyuf2-workbench
+TinyUF2 is for app-only iteration. For a full recovery flash, put the MagTag in
+ESP32-S2 ROM bootloader mode and use direct USB:
+
+```sh
+tools/magtag-flash-workbench --full --yes --direct-usb
 ```
 
 Direct workstation USB fallback:
