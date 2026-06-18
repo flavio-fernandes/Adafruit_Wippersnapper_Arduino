@@ -88,7 +88,7 @@ static void magtagPrepareWakeButtons() {
 }
 
 static void magtagPrepareWakeButtonsForSleep() {
-  const uint8_t wakePins[] = {BUTTON_A, BUTTON_B, BUTTON_C, BUTTON_D};
+  const uint8_t wakePins[] = {BUTTON_A, BUTTON_B, BUTTON_C};
   for (uint8_t i = 0; i < sizeof(wakePins) / sizeof(wakePins[0]); i++) {
     gpio_num_t pin = (gpio_num_t)wakePins[i];
     rtc_gpio_init(pin);
@@ -110,12 +110,11 @@ static void magtagPrintButtonLevels() {
 }
 
 static uint64_t magtagWakeButtonMask() {
-  return (1ULL << BUTTON_A) | (1ULL << BUTTON_B) | (1ULL << BUTTON_C) |
-         (1ULL << BUTTON_D);
+  return (1ULL << BUTTON_A) | (1ULL << BUTTON_B) | (1ULL << BUTTON_C);
 }
 
 static bool magtagWakePinFromMask(uint64_t mask, uint8_t *pin) {
-  const uint8_t wakePins[] = {BUTTON_A, BUTTON_B, BUTTON_C, BUTTON_D};
+  const uint8_t wakePins[] = {BUTTON_A, BUTTON_B, BUTTON_C};
   for (uint8_t i = 0; i < sizeof(wakePins) / sizeof(wakePins[0]); i++) {
     if ((mask & (1ULL << wakePins[i])) != 0) {
       *pin = wakePins[i];

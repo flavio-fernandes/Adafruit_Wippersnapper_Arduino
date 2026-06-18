@@ -131,7 +131,7 @@ This avoids changing sleep behavior on other WipperSnapper boards.
 Use ESP32-S2 wake sources:
 
 - Timer wake for the long sleep interval.
-- GPIO wake for the MagTag front buttons.
+- GPIO wake for MagTag front buttons A, B, and C.
 
 The exact MagTag button pin constants should come from the board variant when
 available. If the variant does not expose stable names, add MagTag-only
@@ -144,12 +144,18 @@ pin. The queued event uses that exact pin, the normal WipperSnapper `pin_event`
 payload, and publishes a `LOW` value because the MagTag buttons use pull-ups and
 wake on low.
 
-Before enabling EXT1 wake, configure the front-button pins in the RTC GPIO
+Before enabling EXT1 wake, configure the wake-button pins in the RTC GPIO
 domain as input-only with RTC pull-ups enabled and pulldowns disabled. The
 normal Arduino `INPUT_PULLUP` configuration is enough while the firmware is
 awake, but it does not reliably hold the pins during ESP32-S2 deep sleep. In
 physical testing, omitting RTC pull-ups allowed Button D/GPIO11 to float low and
 cause an immediate false EXT1 wake before the intended Button B press.
+
+Button D is intentionally left out of the deep-sleep EXT1 wake mask for now.
+It remains a normal awake-mode WipperSnapper input and is still included in
+diagnostic level output, but excluding it from deep-sleep wake removes the one
+button that produced the observed false wake while preserving the verified
+Button B wake path.
 
 The queued event is sent only after MQTT is connected. If Adafruit IO reports a
 throttle window before the queued event is sent, the firmware waits for the
@@ -209,7 +215,7 @@ Behavior:
 - `WSLP SLEEP [seconds]` forces the normal sleep-entry path immediately. When a
   value is supplied, that value is used as the timer wake interval for the test.
   The sleep-entry path also logs A/B/C/D button levels immediately before EXT1
-  wake is enabled, so a held or floating wake pin can be diagnosed from serial
+  wake is enabled, so a held or floating button can be diagnosed from serial
   output.
 
 Serial cannot press a physical GPIO while the ESP32-S2 is already in deep

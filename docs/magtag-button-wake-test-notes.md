@@ -262,3 +262,37 @@ Evidence artifacts from the successful direct-USB run:
 
 - `artifacts/magtag-rtc-pullup-sleep-marker.jpg`
 - `artifacts/magtag-after-button-b-success.jpg`
+
+## Button D Follow-Up
+
+Even though RTC pull-ups fixed the Button B test path, Button D/GPIO11 was the
+only observed false-wake source. To keep the low-power path conservative,
+Button D is now excluded from the EXT1 deep-sleep wake mask. Button D remains a
+normal awake-mode input and still appears in `WSLP STATUS` and pre-sleep level
+diagnostics, but only Buttons A, B, and C can wake the MagTag from deep sleep.
+
+This keeps the verified Button B flow intact while avoiding a known noisy wake
+source. Re-enable Button D as a wake source only after it has its own focused
+deep-sleep stability test.
+
+The Button D exclusion was tested over direct USB:
+
+1. Flashed the A/B/C-only EXT1 wake-mask build.
+2. Confirmed baseline status:
+   `wake_cause=0 ext1_mask=0x0 button_a=1 button_b=1 button_c=1 button_d=1`.
+3. Sent `WSLP SLEEP 600` and confirmed local USB serial disappeared.
+4. Pressed Button D and observed no USB serial reappearance for about 45
+   seconds.
+5. Pressed Button B and observed the expected wake/publish path:
+
+```text
+WS_MAGTAG_LOW_POWER_WAKE reason=button mask=0x4000
+WS_MAGTAG_LOW_POWER_BUTTON_QUEUED pin=14
+WS_MAGTAG_LOW_POWER_BUTTON_PUBLISHED pin=14
+```
+
+Final status after the test:
+
+```text
+WS_MAGTAG_LOW_POWER_STATUS ... queued_button=0 wake_cause=3 ext1_mask=0x4000 button_a=1 button_b=1 button_c=1 button_d=1
+```
