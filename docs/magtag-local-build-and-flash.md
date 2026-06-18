@@ -287,6 +287,12 @@ Use `tools/magtag-workbench-status` first when the failure mode is unclear. It
 checks host reachability, SSH, the workbench API, the serial portal, and the
 SLOT1 status reported by the API when available.
 
+The status helper also prints the USB identity for the selected slot. Treat
+`serial: reachable` as a transport check only. If `slot.usb` shows
+`MagTag 2.9 Grayscale (239a:00e5)`, the MagTag is in TinyUF2 bootloader mode;
+the workbench socket can accept connections, but firmware app commands such as
+`WSLP STATUS` will not return anything until the WipperSnapper app is running.
+
 If you need to bypass `tools/espwb-monitor`, set a local TCP monitor endpoint in
 `config/workbench.env`:
 

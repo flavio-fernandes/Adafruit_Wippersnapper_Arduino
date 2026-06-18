@@ -72,7 +72,13 @@ Healthy output should show host/API/SSH/serial reachable and something like:
 
 ```text
 slot: present=True running=True recovering=False state=idle tcp_port=4001
+slot.usb: MagTag 2.9 Grayscale (239a:00e5)
 ```
+
+`serial: reachable` only means the workbench RFC2217 socket is accepting
+connections. It does not prove the WipperSnapper app is running. If
+`slot.usb` shows `MagTag 2.9 Grayscale (239a:00e5)`, the board is in TinyUF2
+bootloader mode; `WSLP ...` app commands will connect but return no status.
 
 Quick raw port checks:
 
@@ -179,7 +185,10 @@ while time.time()<deadline:
     if chunk:
         data += chunk
 ser.close()
-print(data.decode("utf-8", "replace"))'
+text=data.decode("utf-8", "replace")
+print(text)
+if "WS_MAGTAG_LOW_POWER_STATUS" not in text:
+    raise SystemExit("No WSLP STATUS response. Check tools/magtag-workbench-status; if slot.usb is 239a:00e5, the board is in TinyUF2 bootloader mode, not the app.")'
 ```
 
 Force a short deep sleep:
@@ -204,7 +213,10 @@ while time.time()<deadline:
     if chunk:
         data += chunk
 ser.close()
-print(data.decode("utf-8", "replace"))'
+text=data.decode("utf-8", "replace")
+print(text)
+if "WS_MAGTAG_LOW_POWER_SLEEP" not in text and "SERIAL_EXCEPTION" not in text:
+    raise SystemExit("No WSLP SLEEP response. Check tools/magtag-workbench-status; if slot.usb is 239a:00e5, the board is in TinyUF2 bootloader mode, not the app.")'
 ```
 
 Expected forced-sleep output includes:
@@ -299,7 +311,10 @@ while time.time()<deadline:
     if chunk:
         data += chunk
 ser.close()
-print(data.decode("utf-8", "replace"))'
+text=data.decode("utf-8", "replace")
+print(text)
+if "WS_MAGTAG_LOW_POWER_STATUS" not in text:
+    raise SystemExit("No WSLP STATUS response. Check tools/magtag-workbench-status; if slot.usb is 239a:00e5, the board is in TinyUF2 bootloader mode, not the app.")'
 ```
 
 Force sleep and capture the screen:
@@ -324,7 +339,10 @@ while time.time()<deadline:
     if chunk:
         data += chunk
 ser.close()
-print(data.decode("utf-8", "replace"))'
+text=data.decode("utf-8", "replace")
+print(text)
+if "WS_MAGTAG_LOW_POWER_SLEEP" not in text and "SERIAL_EXCEPTION" not in text:
+    raise SystemExit("No WSLP SLEEP response. Check tools/magtag-workbench-status; if slot.usb is 239a:00e5, the board is in TinyUF2 bootloader mode, not the app.")'
 
 tools/workbench-camera-sequence 5 3
 ```

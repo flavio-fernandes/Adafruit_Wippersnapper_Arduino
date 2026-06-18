@@ -70,6 +70,18 @@ for item in data.get("slots", []):
                 item.get("last_error"),
             )
         )
+        usb_devices = item.get("usb_devices") or []
+        if usb_devices:
+            for usb in usb_devices:
+                product = usb.get("product") or "unknown product"
+                vid_pid = usb.get("vid_pid") or "unknown VID:PID"
+                print("slot.usb: {} ({})".format(product, vid_pid))
+                if str(vid_pid).lower() == "239a:00e5":
+                    print(
+                        "slot.note: TinyUF2 bootloader mode; WSLP app serial commands will not respond"
+                    )
+        else:
+            print("slot.usb: none")
         break
 else:
     print("slot: not found")
