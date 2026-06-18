@@ -72,16 +72,22 @@ Healthy output should show host/API/SSH/serial reachable and something like:
 
 ```text
 slot: present=True running=True recovering=False state=idle tcp_port=4001
-slot.usb: MagTag 2.9 Grayscale (239a:00e5)
+slot.usb: <app USB serial identity>
 ```
 
 `serial: reachable` only means the workbench RFC2217 socket is accepting
-connections. It does not prove the WipperSnapper app is running. If
-`slot.usb` shows `MagTag 2.9 Grayscale (239a:00e5)`, the board is in TinyUF2
-bootloader mode; `WSLP ...` app commands will connect but return no status.
-If a verified TinyUF2 app or full rewrite plus a workbench EN reset still leaves
-the slot at `239a:00e5`, use a physical MagTag reset or workbench power cycle to
-leave TinyUF2.
+connections. It does not prove the WipperSnapper app is running.
+
+## MagTag Runtime States
+
+Use `tools/magtag-workbench-status` first, then match the state below:
+
+| State | What status usually shows | What it means | Way out |
+| --- | --- | --- | --- |
+| App running | Slot present/running, serial reachable, `slot.usb` is not `239a:00e5`, and `WSLP STATUS` returns `WS_MAGTAG_LOW_POWER_STATUS ...` | WipperSnapper is running and can accept serial backdoor commands. | No recovery needed. Use `WSLP AWAKE <seconds>` to keep it awake while debugging. |
+| TinyUF2 bootloader | `slot.usb: MagTag 2.9 Grayscale (239a:00e5)` and `WSLP ...` commands return nothing | The board is exposing `MAGTAGBOOT`; the app is not running. | Flash with `--tinyuf2-workbench`. If verified app-only/full UF2 rewrites plus a workbench EN reset still leave `239a:00e5`, press the physical MagTag reset button or power-cycle the workbench. |
+| Deep sleep | Slot may disappear, serial may be unreachable, or the portal may reconnect only after wake; `WSLP ...` cannot respond while asleep | The app intentionally shut down the ESP32-S2 and USB serial is gone. | Wait for timer wake, press a configured MagTag wake button, or press reset. Reset exits deep sleep by starting a fresh boot. |
+| Portal/recovery issue | Host/API may be reachable but serial is refused, slot is not running, or `last_error` is set | The workbench service/portal is out of sync with USB state. | Run `tools/magtag-recover-workbench`, then check status again. |
 
 Quick raw port checks:
 

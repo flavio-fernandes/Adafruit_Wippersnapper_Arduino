@@ -297,6 +297,15 @@ still report `239a:00e5`, use a physical MagTag reset or workbench power cycle;
 the remote recovery path can restore the portal but may not make TinyUF2 jump to
 the app in that state.
 
+Think of the MagTag as one of these states:
+
+| State | How to identify it | Recovery path |
+| --- | --- | --- |
+| App running | Slot is present/running, serial is reachable, `slot.usb` is not `239a:00e5`, and `WSLP STATUS` prints `WS_MAGTAG_LOW_POWER_STATUS ...`. | No recovery needed. Send `WSLP AWAKE <seconds>` before long debug sessions. |
+| TinyUF2 bootloader | `slot.usb: MagTag 2.9 Grayscale (239a:00e5)`; serial may connect, but `WSLP ...` commands return no app response. | Use `tools/magtag-flash-workbench --app-only --yes --tinyuf2-workbench` or `--full`. If verified writes plus workbench EN reset still stay at `239a:00e5`, press the physical reset button or power-cycle the workbench. |
+| Deep sleep | USB serial disappears or stays quiet until the app wakes; `WSLP ...` cannot respond while the ESP32-S2 is asleep. | Wait for the sleep timer, press a configured MagTag wake button, or press reset. Reset exits deep sleep by doing a fresh boot. |
+| Workbench portal issue | Host/API may be reachable but serial is refused, slot is not running, or `last_error` is set. | Run `tools/magtag-recover-workbench`, then re-check `tools/magtag-workbench-status`. |
+
 If you need to bypass `tools/espwb-monitor`, set a local TCP monitor endpoint in
 `config/workbench.env`:
 
