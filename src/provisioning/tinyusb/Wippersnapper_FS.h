@@ -68,6 +68,9 @@ public:
 
   void parseSecrets();
 
+  void printFsDiagnostics(); ///< Dump the persisted boot/format/rescue
+                             ///< breadcrumbs from NVS (ESP32; no-op elsewhere).
+
 private:
 #ifdef ARDUINO_ARCH_ESP32
   bool restoreBootRegionIfBlank(); ///< Restore a power-loss-erased boot

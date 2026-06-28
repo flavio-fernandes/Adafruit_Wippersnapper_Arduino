@@ -167,7 +167,7 @@
 #endif
 
 #define WS_VERSION                                                             \
-  "1.0.0-rescue-test.1" ///< WipperSnapper app. version (semver-formatted)
+  "1.0.0-rescue-test.7" ///< WipperSnapper app. version (semver-formatted)
 
 #ifdef ARDUINO_ARCH_ESP32
 // Reset-reason helpers (defined in Wippersnapper.cpp). Exposed so the

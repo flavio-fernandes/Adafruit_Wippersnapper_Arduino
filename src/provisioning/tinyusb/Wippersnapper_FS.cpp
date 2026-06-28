@@ -105,6 +105,62 @@ static const char *kWSFsProvisionedKey = "fs_ok";
 static const char *kWSFsLastResetKey = "last_rst"; ///< reset code this boot
 static const char *kWSFsFormatResetKey = "fmt_rst"; ///< reset code at last format
 static const char *kWSFsFormatCountKey = "fmt_cnt"; ///< number of (re)formats
+// Boot-region rescue diagnostics, persisted in the same NVS namespace. The
+// rescue runs in the FS constructor, BEFORE the USB CDC re-enumerates, so its
+// serial prints are routinely missed by a host monitor. Persisting the outcome
+// means the self-heal decision is never a guess: it can be read back (and is
+// echoed by printFsDiagnostics) on this boot or any later one.
+static const char *kWSFsRescueOutcomeKey = "rsc_last"; ///< outcome this boot
+static const char *kWSFsRescueCountKey = "rsc_cnt";    ///< successful restores
+static const char *kWSFsRescueEvalKey = "rsc_eval";    ///< times evaluated
+static const char *kWSFsRescueResetKey = "rsc_rst";    ///< reset at last eval
+static const char *kWSFsRescueStragKey = "rsc_strg";   ///< non-0xFF bytes seen
+static const char *kWSFsRescueLenKey = "rsc_len";      ///< region bytes at eval
+// Sentinel for "straggler count not measured" (e.g. live region unreadable).
+static const uint32_t kWSFsRescueStragUnknown = 0xFFFFFFFFu;
+
+// Outcome of a boot-region rescue evaluation (restoreBootRegionIfBlank). These
+// values are persisted to NVS - append new ones, never renumber, or stored
+// values from older firmware would be misread.
+enum WsRescueOutcome : uint8_t {
+  kRescueNotEvaluated = 0,     ///< mounted cleanly; rescue not needed this boot
+  kRescueNoBackup = 1,         ///< no usable boot-region backup in NVS
+  kRescueBackupBad = 2,        ///< backup failed CRC32 / boot-signature check
+  kRescueAllocFail = 3,        ///< out of memory for the region buffers
+  kRescueLiveHasSignature = 4, ///< live region structured (0x55AA) - not blank
+  kRescueTooDirty = 5,         ///< too many non-0xFF bytes - not blank enough
+  kRescueFlashUnhealthy = 6,   ///< flash not responding / JEDEC bad
+  kRescueRestored = 7,         ///< backup written back - volume should re-mount
+  kRescueWriteFailed = 8,      ///< restore write to flash failed
+};
+
+/*! @brief Human-readable name for a persisted WsRescueOutcome code.
+    @param outcome The stored outcome byte.
+    @returns A short description (never null). */
+static const char *getRescueOutcomeStr(uint8_t outcome) {
+  switch (outcome) {
+  case kRescueNotEvaluated:
+    return "not evaluated (mounted cleanly)";
+  case kRescueNoBackup:
+    return "no usable NVS backup";
+  case kRescueBackupBad:
+    return "backup failed integrity check";
+  case kRescueAllocFail:
+    return "out of memory";
+  case kRescueLiveHasSignature:
+    return "region structured (boot signature present)";
+  case kRescueTooDirty:
+    return "region not blank enough";
+  case kRescueFlashUnhealthy:
+    return "flash unhealthy";
+  case kRescueRestored:
+    return "RESTORED from backup";
+  case kRescueWriteFailed:
+    return "restore write FAILED";
+  default:
+    return "unknown";
+  }
+}
 #endif
 
 /**************************************************************************/
@@ -165,6 +221,44 @@ static void recordBootResetReason() {
   if (!prefs.begin(kWSFsNvsNamespace, /*readOnly=*/false))
     return;
   prefs.putUChar(kWSFsLastResetKey, (uint8_t)getResetReasonCode(0));
+  // Clear the per-boot rescue outcome. restoreBootRegionIfBlank() overwrites
+  // it if the first mount fails and the rescue is evaluated this boot; if the
+  // mount succeeds it is never called, so this "not evaluated" value stands and
+  // tells us plainly that the boot region was fine this boot.
+  prefs.putUChar(kWSFsRescueOutcomeKey, (uint8_t)kRescueNotEvaluated);
+  prefs.end();
+#endif
+}
+
+/**************************************************************************/
+/*!
+    @brief    Persists the outcome of a boot-region rescue evaluation to NVS:
+              the per-boot outcome code, the reset reason, the measured
+              straggler count and region size, a running evaluation count, and
+              (on success) a running successful-restore count. This is what
+              makes the self-heal auditable even when the early-boot serial
+              prints are missed. No-op without NVS.
+    @param    outcome     The WsRescueOutcome for this evaluation.
+    @param    rstCode     Reset reason code in effect this boot.
+    @param    stragglers  Non-0xFF bytes seen in the live region, or
+                          kWSFsRescueStragUnknown if it could not be measured.
+    @param    len         Boot-region size evaluated, in bytes (0 if unknown).
+*/
+/**************************************************************************/
+static void recordRescueOutcome(WsRescueOutcome outcome, uint8_t rstCode,
+                                uint32_t stragglers, uint32_t len) {
+#ifdef ARDUINO_ARCH_ESP32
+  Preferences prefs;
+  if (!prefs.begin(kWSFsNvsNamespace, /*readOnly=*/false))
+    return;
+  prefs.putUChar(kWSFsRescueOutcomeKey, (uint8_t)outcome);
+  prefs.putUChar(kWSFsRescueResetKey, rstCode);
+  prefs.putUInt(kWSFsRescueStragKey, stragglers);
+  prefs.putUInt(kWSFsRescueLenKey, len);
+  prefs.putUInt(kWSFsRescueEvalKey, prefs.getUInt(kWSFsRescueEvalKey, 0) + 1);
+  if (outcome == kRescueRestored)
+    prefs.putUInt(kWSFsRescueCountKey,
+                  prefs.getUInt(kWSFsRescueCountKey, 0) + 1);
   prefs.end();
 #endif
 }
@@ -193,19 +287,43 @@ static void recordFormatEvent() {
 /*!
     @brief    Prints the persisted boot/format diagnostics (this boot's reset
               reason, and - if any format has ever run - the count and the reset
-              reason at the last format) to the serial console. No-op without
-              NVS.
+              reason at the last format) plus the boot-region rescue verdict and
+              history, to the serial console. No-op without NVS.
+
+              Safe to call repeatedly. The constructor, printDeviceInfo() and
+              connect() all call it around boot, but on the ESP32-S2 native-USB
+              CDC a host monitor routinely misses that whole window (every
+              captured log starts after it). The reliable surface is the run()
+              loop, which heartbeats this every 30s, plus fsHalt() on a halt
+              boot - so the breadcrumbs are visible whenever a monitor attaches.
 */
 /**************************************************************************/
-static void printFsDiagnostics() {
+void Wippersnapper_FS::printFsDiagnostics() {
 #ifdef ARDUINO_ARCH_ESP32
   Preferences prefs;
-  if (!prefs.begin(kWSFsNvsNamespace, /*readOnly=*/true))
+  if (!prefs.begin(kWSFsNvsNamespace, /*readOnly=*/true)) {
+    // Never fail silently - if the namespace is somehow absent we want to SEE
+    // that in the log rather than be left guessing why no breadcrumb appeared.
+    WS_DEBUG_PRINTLN("[fs] diagnostics unavailable (NVS ws_fs not present)");
     return;
+  }
   uint8_t lastRst = prefs.getUChar(kWSFsLastResetKey, 0);
   uint8_t fmtRst = prefs.getUChar(kWSFsFormatResetKey, 0);
   uint32_t fmtCnt = prefs.getUInt(kWSFsFormatCountKey, 0);
+  uint8_t rscLast = prefs.getUChar(kWSFsRescueOutcomeKey, kRescueNotEvaluated);
+  uint32_t rscCnt = prefs.getUInt(kWSFsRescueCountKey, 0);
+  uint32_t rscEval = prefs.getUInt(kWSFsRescueEvalKey, 0);
+  uint8_t rscRst = prefs.getUChar(kWSFsRescueResetKey, 0);
+  uint32_t rscStrag =
+      prefs.getUInt(kWSFsRescueStragKey, kWSFsRescueStragUnknown);
+  uint32_t rscLen = prefs.getUInt(kWSFsRescueLenKey, 0);
   prefs.end();
+
+  // Lead with the firmware version: printDeviceInfo() prints it too, but that
+  // runs pre-network where the host monitor misses it, so this is the only
+  // build identifier that reliably lands in the serial log.
+  WS_DEBUG_PRINT("[fs] firmware: ");
+  WS_DEBUG_PRINTLN(WS_VERSION);
 
   WS_DEBUG_PRINT("[fs] boot reset reason: ");
   WS_DEBUG_PRINTVAR((int)lastRst);
@@ -220,6 +338,31 @@ static void printFsDiagnostics() {
     WS_DEBUG_PRINT(" (");
     WS_DEBUG_PRINTVAR(getResetReasonStr(fmtRst));
     WS_DEBUG_PRINTLN(")");
+  }
+
+  // Boot-region rescue: the per-boot verdict plus cumulative history. This is
+  // the durable record that survives the missed early-boot serial prints.
+  WS_DEBUG_PRINT("[fs] boot-region rescue this boot: ");
+  WS_DEBUG_PRINTLNVAR(getRescueOutcomeStr(rscLast));
+  WS_DEBUG_PRINT("[fs] boot-region rescues so far: ");
+  WS_DEBUG_PRINTVAR(rscCnt);
+  WS_DEBUG_PRINT(" (evaluated ");
+  WS_DEBUG_PRINTVAR(rscEval);
+  WS_DEBUG_PRINTLN(" time(s))");
+  if (rscEval > 0) {
+    WS_DEBUG_PRINT("[fs] last rescue eval: reset reason ");
+    WS_DEBUG_PRINTVAR((int)rscRst);
+    WS_DEBUG_PRINT(" (");
+    WS_DEBUG_PRINTVAR(getResetReasonStr(rscRst));
+    WS_DEBUG_PRINT("), region ");
+    WS_DEBUG_PRINTVAR(rscLen);
+    WS_DEBUG_PRINT(" bytes, ");
+    if (rscStrag == kWSFsRescueStragUnknown) {
+      WS_DEBUG_PRINTLN("stragglers n/a");
+    } else {
+      WS_DEBUG_PRINTVAR(rscStrag);
+      WS_DEBUG_PRINTLN(" non-0xFF byte(s)");
+    }
   }
 #endif
 }
@@ -447,17 +590,33 @@ void Wippersnapper_FS::backupBootRegion() {
 */
 /**************************************************************************/
 bool Wippersnapper_FS::restoreBootRegionIfBlank() {
-  if (!flash.begin())
+  // Every exit below records exactly what happened to NVS (recordRescueOutcome)
+  // AND prints it, so the self-heal verdict is never a guess - even though
+  // these prints run before the USB CDC re-enumerates and a host monitor
+  // usually misses them. The reset reason is captured up front so it is tagged
+  // on whatever outcome we land on.
+  uint8_t rst = (uint8_t)getResetReasonCode(0);
+
+  if (!flash.begin()) {
+    recordRescueOutcome(kRescueFlashUnhealthy, rst, kWSFsRescueStragUnknown, 0);
+    WS_DEBUG_PRINTLN("[fs] rescue: flash not responding - skipped");
     return false;
+  }
   Preferences prefs;
-  if (!prefs.begin(kBootBkNamespace, /*readOnly=*/true))
+  if (!prefs.begin(kBootBkNamespace, /*readOnly=*/true)) {
+    recordRescueOutcome(kRescueNoBackup, rst, kWSFsRescueStragUnknown, 0);
+    WS_DEBUG_PRINTLN("[fs] rescue: no NVS backup namespace yet - skipped");
     return false;
+  }
   size_t len = prefs.getUInt(kBootBkLenKey, 0);
   uint32_t wantCrc = prefs.getUInt(kBootBkCrcKey, 0);
   if (len == 0 || len > kMaxBootRegion ||
       (size_t)prefs.getBytesLength(kBootBkBlobKey) != len) {
     prefs.end();
-    return false; // no usable backup
+    recordRescueOutcome(kRescueNoBackup, rst, kWSFsRescueStragUnknown,
+                        (uint32_t)len);
+    WS_DEBUG_PRINTLN("[fs] rescue: no usable boot-region backup - skipped");
+    return false;
   }
   uint8_t *backup = (uint8_t *)malloc(len);
   uint8_t *live = (uint8_t *)malloc(len);
@@ -465,50 +624,100 @@ bool Wippersnapper_FS::restoreBootRegionIfBlank() {
     prefs.end();
     free(backup);
     free(live);
+    recordRescueOutcome(kRescueAllocFail, rst, kWSFsRescueStragUnknown,
+                        (uint32_t)len);
+    WS_DEBUG_PRINTLN("[fs] rescue: out of memory for region buffers - skipped");
     return false;
   }
   size_t got = prefs.getBytes(kBootBkBlobKey, backup, len);
   prefs.end();
 
-  bool ok = (got == len) &&
-            // Trust the backup only if it passes its own integrity checks.
-            (crc32_buf(backup, len) == wantCrc) && (backup[510] == 0x55) &&
-            (backup[511] == 0xAA) &&
-            // Read the live region; we decide below whether it is blank.
-            flash.readBlocks(0, live, len / kBootSectorSize);
-  if (ok) {
-    // Restore when the region is blank *enough*: no valid boot signature, and
-    // only a handful of non-0xFF stragglers left by an incomplete power-loss
-    // erase. Anything structured (a 0x55AA signature, or many non-0xFF bytes)
-    // means a state we do not understand - hands off.
-    size_t stragglers = 0;
-    for (size_t i = 0; i < len; i++)
-      if (live[i] != 0xFF)
-        stragglers++;
-    bool hasBootSig = (live[510] == 0x55 && live[511] == 0xAA);
-    if (hasBootSig || stragglers > len / kMaxBlankStragglerDiv)
-      ok = false; // structured data or too dirty -> do not touch
+  // Trust the backup only if it passes its own integrity checks.
+  if (got != len || crc32_buf(backup, len) != wantCrc || backup[510] != 0x55 ||
+      backup[511] != 0xAA) {
+    free(backup);
+    free(live);
+    recordRescueOutcome(kRescueBackupBad, rst, kWSFsRescueStragUnknown,
+                        (uint32_t)len);
+    WS_DEBUG_PRINTLN("[fs] rescue: NVS backup failed integrity check");
+    return false;
   }
-  // Confirm the flash chip is actually responding before writing to it.
-  if (ok) {
-    uint32_t jedec = flash.getJEDECID();
-    if (jedec == 0 || jedec == 0xFFFFFF)
-      ok = false;
+  // Read the live region so we can judge whether it is blank.
+  if (!flash.readBlocks(0, live, len / kBootSectorSize)) {
+    free(backup);
+    free(live);
+    recordRescueOutcome(kRescueFlashUnhealthy, rst, kWSFsRescueStragUnknown,
+                        (uint32_t)len);
+    WS_DEBUG_PRINTLN("[fs] rescue: could not read live boot region - skipped");
+    return false;
   }
 
-  if (ok) {
-    WS_DEBUG_PRINTLN("[fs] boot region blank - restoring from backup...");
-    ok = flash.writeBlocks(0, backup, len / kBootSectorSize);
-    flash.syncBlocks();
-    if (ok) {
-      WS_DEBUG_PRINT("[fs] boot region restored (");
-      WS_DEBUG_PRINT(len);
-      WS_DEBUG_PRINTLN(" bytes). Re-mounting...");
-    }
+  // Measure how blank the live region actually is. stragglers is the gold
+  // signal: 0 == a perfectly clean erase (e.g. the artificial erase-region
+  // test); a small non-zero count == an *incomplete* power-loss erase (the
+  // real-world shape); thousands == real, structured data we must not touch.
+  uint32_t stragglers = 0;
+  for (size_t i = 0; i < len; i++)
+    if (live[i] != 0xFF)
+      stragglers++;
+  bool hasBootSig = (live[510] == 0x55 && live[511] == 0xAA);
+
+  WS_DEBUG_PRINT("[fs] rescue: live boot region ");
+  WS_DEBUG_PRINTVAR(stragglers);
+  WS_DEBUG_PRINT(" non-0xFF of ");
+  WS_DEBUG_PRINTVAR((uint32_t)len);
+  WS_DEBUG_PRINTLN(hasBootSig ? " bytes, boot signature PRESENT"
+                              : " bytes, no boot signature");
+
+  // Restore only when the region is blank *enough*: no boot signature, and the
+  // straggler count within the incomplete-erase tolerance.
+  if (hasBootSig) {
+    free(backup);
+    free(live);
+    recordRescueOutcome(kRescueLiveHasSignature, rst, stragglers,
+                        (uint32_t)len);
+    WS_DEBUG_PRINTLN("[fs] rescue: region is structured (boot signature) - "
+                     "hands off");
+    return false;
   }
+  if (stragglers > len / kMaxBlankStragglerDiv) {
+    free(backup);
+    free(live);
+    recordRescueOutcome(kRescueTooDirty, rst, stragglers, (uint32_t)len);
+    WS_DEBUG_PRINT("[fs] rescue: region not blank enough (");
+    WS_DEBUG_PRINTVAR(stragglers);
+    WS_DEBUG_PRINT(" > ");
+    WS_DEBUG_PRINTVAR((uint32_t)(len / kMaxBlankStragglerDiv));
+    WS_DEBUG_PRINTLN(" allowed) - hands off");
+    return false;
+  }
+  // Confirm the flash chip is actually responding before writing to it.
+  uint32_t jedec = flash.getJEDECID();
+  if (jedec == 0 || jedec == 0xFFFFFF) {
+    free(backup);
+    free(live);
+    recordRescueOutcome(kRescueFlashUnhealthy, rst, stragglers, (uint32_t)len);
+    WS_DEBUG_PRINTLN("[fs] rescue: flash JEDEC unhealthy - skipped write");
+    return false;
+  }
+
+  WS_DEBUG_PRINT("[fs] boot region blank (");
+  WS_DEBUG_PRINTVAR(stragglers);
+  WS_DEBUG_PRINTLN(" straggler byte(s)) - restoring from backup...");
+  bool wrote = flash.writeBlocks(0, backup, len / kBootSectorSize);
+  flash.syncBlocks();
   free(backup);
   free(live);
-  return ok;
+  if (!wrote) {
+    recordRescueOutcome(kRescueWriteFailed, rst, stragglers, (uint32_t)len);
+    WS_DEBUG_PRINTLN("[fs] rescue: write-back to flash FAILED");
+    return false;
+  }
+  recordRescueOutcome(kRescueRestored, rst, stragglers, (uint32_t)len);
+  WS_DEBUG_PRINT("[fs] boot region restored (");
+  WS_DEBUG_PRINTVAR((uint32_t)len);
+  WS_DEBUG_PRINTLN(" bytes). Re-mounting...");
+  return true;
 }
 #endif // ARDUINO_ARCH_ESP32
 
@@ -1133,6 +1342,10 @@ void Wippersnapper_FS::fsHalt(String msg) {
   int rstCode = getResetReasonCode(0);
   const char *rstStr = getResetReasonStr(rstCode);
 #endif
+  // Surface the persisted fs/rescue breadcrumbs once before looping. This is
+  // the one reliably-visible print on a halt boot (USB is re-attached before we
+  // get here), unlike the constructor's early dump the host monitor can miss.
+  printFsDiagnostics();
   while (1) {
     WS_DEBUG_PRINTLN("Fatal Error: Halted execution!");
     WS_DEBUG_PRINTLN(msg.c_str());

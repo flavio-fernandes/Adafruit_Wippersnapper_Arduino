@@ -2913,6 +2913,20 @@ void Wippersnapper::connect() {
   // Enable WDT after wifi connection as wifiMulti doesnt feed WDT
   WS.enableWDT(WS_WDT_TIMEOUT);
 
+  // Re-emit the persisted filesystem / boot-region-rescue breadcrumbs here -
+  // AFTER the network is up. The same dump runs early in the FS constructor and
+  // in printDeviceInfo(), but both happen before WiFi connects, inside the
+  // post-boot USB CDC re-enumeration gap that a host monitor reliably misses
+  // (empirically, none of our serial captures contain the pre-network block).
+  // Printing it once past "Connected to WiFi!" guarantees the counters land in
+  // the log on every successful boot, whether or not the rescue fired.
+  // NOTE: use the bare member (this->_fileSystem) - the live FS object is the
+  // one provision() allocated on this instance (the sketch's `wipper`), not the
+  // separate global `WS`, whose _fileSystem is never assigned (stays null). The
+  // earlier WS._fileSystem guard was always false, silently skipping this dump.
+  if (_fileSystem != nullptr)
+    _fileSystem->printFsDiagnostics();
+
   // Register hardware with Wippersnapper
   WS_DEBUG_PRINTLN("Registering hardware with WipperSnapper...")
   if (!registerBoard()) {
@@ -2983,6 +2997,25 @@ void Wippersnapper::publishPinConfigComplete() {
 */
 /**************************************************************************/
 ws_status_t Wippersnapper::run() {
+  // Heartbeat the filesystem / boot-region-rescue breadcrumbs from the run loop
+  // - the ONLY reliably-captured serial region on the ESP32-S2 native-USB CDC.
+  // The boot and connect() dumps land in the post-reset re-enumeration window a
+  // host monitor routinely misses (empirically every captured log starts after
+  // it), so re-emit here on the first iteration and every 30s after, ensuring
+  // the verdict is visible whenever the monitor is attached. ESP32-only; no-op
+  // elsewhere via printFsDiagnostics().
+  // Use the bare member (this->_fileSystem), NOT WS._fileSystem: the live FS is
+  // the object provision() allocated on this instance; the global WS keeps its
+  // _fileSystem null forever, so the old WS._fileSystem guard never fired.
+  if (_fileSystem != nullptr) {
+    static uint32_t lastFsDiagMs = 0;
+    uint32_t nowMs = millis();
+    if (lastFsDiagMs == 0 || (nowMs - lastFsDiagMs) >= 30000) {
+      lastFsDiagMs = nowMs == 0 ? 1 : nowMs; // keep nonzero so it re-triggers
+      _fileSystem->printFsDiagnostics();
+    }
+  }
+
   // Check networking
   runNetFSM();
   WS.feedWDT();
